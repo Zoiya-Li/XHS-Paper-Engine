@@ -1,0 +1,145 @@
+# XHS Paper Engine Configuration File
+# Modify this file to adjust various parameters without changing code
+
+# ============================================================
+# Research Domain Configuration (Most Commonly Modified)
+# ============================================================
+research:
+  # Search keywords (Agent will use these to search for papers)
+  keywords:
+    - "Multi-Agent System Memory"
+
+  # arXiv categories (can specify multiple to filter search results)
+  # Common categories:
+  #   - cs.AI  Artificial Intelligence
+  #   - cs.CL  Computational Linguistics (NLP)
+  #   - cs.LG  Machine Learning
+  #   - cs.CV  Computer Vision
+  #   - cs.IR  Information Retrieval
+  #   - cs.NE  Neural and Evolutionary Computing
+  #   - stat.ML Statistical Machine Learning
+  categories:
+    - "cs.AI"
+    - "cs.CL"
+    - "cs.LG"
+
+  # Data sources (ordered by priority)
+  # Options: arxiv, semantic
+  # - semantic: requires S2_API_KEY
+  sources:
+    - "arxiv"
+    # - "semantic"   # only enable when S2_API_KEY is provided
+
+  # Number of days to search for papers
+  days: 3
+
+# ============================================================
+# API Configuration
+# ============================================================
+api:
+  # LLM provider: siliconflow (default) or openrouter
+  provider: "siliconflow"
+
+  siliconflow:
+    timeout: 120           # API timeout
+    max_retries: 3
+    base_url: "https://api.siliconflow.cn/v1"
+
+  siliconflow_ocr:
+    timeout: 60           # OCR API timeout
+    max_retries: 3
+    base_url: "https://api.siliconflow.cn/v1"
+
+  openrouter:
+    timeout: 120          # API timeout
+    max_retries: 3
+    base_url: "https://openrouter.ai/api/v1"
+
+  arxiv:
+    timeout: 30           # arXiv API timeout
+    max_retries: 3
+    rate_limit_delay: 1.1 # Request interval (seconds), API etiquette
+
+  semantic_scholar:
+    timeout: 20           # S2 API timeout
+    max_retries: 3
+    rate_limit_delay: 1.1
+
+  xiaohongshu_mcp:
+    timeout: 10           # Xiaohongshu MCP service timeout
+    max_retries: 3
+
+# ============================================================
+# LLM Parameters (SiliconFlow - DeepSeek models)
+# ============================================================
+llm:
+  # Unified text-to-text model (chat/selection/xiaohongshu)
+  text:
+    model: "deepseek-ai/DeepSeek-V3"
+    temperature: 0.7
+    max_tokens: 3000
+
+  # Vision-language model (image analysis/optimization)
+  vision:
+    model: "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    temperature: 0.7
+    max_tokens: 4000
+
+  # OCR model for PDF conversion
+  ocr:
+    model: "deepseek-ai/DeepSeek-OCR"
+
+# ============================================================
+# Paper Search Parameters
+# ============================================================
+search:
+  max_results: 100        # Maximum results per data source
+  issues_result: 15       # Number of papers to show in GitHub Issue
+  recent_days: 3          # Search papers from past N days (0=no limit)
+  recent_years: 0         # Search papers from past N years (0=no limit, S2 only)
+  min_citations: 0        # Minimum citation count (0=no limit, S2 only)
+  page_size: 100          # S2 API pagination size
+
+# ============================================================
+# Batch Processing Parameters
+# ============================================================
+batch:
+  paper_selection_batch_size: 20   # Papers per batch for scoring
+  paper_selection_top_k: 20        # Papers to keep in stage 1
+  cli_timeout: 600                 # CLI tool timeout (10 minutes)
+  publish_timeout: 1200            # Publishing timeout (20 minutes)
+  browser_agent_max_steps: 800     # Browser Use Agent max steps
+  browser_agent_max_failures: 10   # Agent max failure tolerance
+
+# ============================================================
+# Publishing Parameters
+# ============================================================
+publish:
+  xiaohongshu:
+    save_as_draft: false           # Save as draft (true=draft, false=publish directly)
+    visibility: private            # Visibility: public=public, private=only me
+    max_content_len: 1000          # Content length limit (Xiaohongshu UI shows 1000 chars)
+
+# ============================================================
+# OCR Parameters (SiliconFlow)
+# ============================================================
+ocr:
+  dpi: 180                # DPI for PDF to image conversion
+  max_tokens: 6000        # Maximum OCR token count
+  mode: "markdown"        # OCR mode: general/markdown/table
+
+# ============================================================
+# Figure/Table Extraction Parameters
+# ============================================================
+extraction:
+  min_score: 0.7          # Minimum confidence score
+  dpi: 300                # DPI for extracted images
+  model_dir: ""           # Optional: local PubLayNet model directory (contains config.yml + model_final.pth). If empty, auto-download to ~/.xhs-paper-engine/publaynet
+
+# ============================================================
+# Retry Mechanism Parameters
+# ============================================================
+retry:
+  base_delay: 2.0         # Base delay time (seconds)
+  max_delay: 60.0         # Maximum delay time (seconds)
+  backoff_factor: 2.0     # Backoff factor (exponential growth)
