@@ -16,7 +16,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .tools.base import ToolRegistry, ToolResult, default_registry
+from .tools.base import ToolRegistry, default_registry
 from . import tools as _tools  # Ensure tool registration side effects run
 from .api_client import APIClient
 from .config import config
@@ -318,9 +318,10 @@ Output directories (this session):
         if action_name == "download_paper":
             action_args.setdefault("output_dir", str(self.papers_dir))
 
-        # Extract figures -> figures directory
+        # Extract figures -> session dir (the tool creates figures/ and tables/
+        # subdirs inside it, i.e. session_dir/figures and session_dir/tables).
         if action_name == "extract_figures":
-            action_args.setdefault("output_dir", str(self.figures_dir))
+            action_args.setdefault("output_dir", str(self.session_dir))
 
         # PDF to Markdown -> markdown directory
         if action_name == "convert_pdf_to_markdown" and "output_path" not in action_args:

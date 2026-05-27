@@ -96,9 +96,9 @@ def build_single_paper_task(pdf_path: str, title: str = None) -> str:
 
 async def main(args):
     """Run daily recommendation task"""
-    # Create output directory
-    output_dir = PROJECT_DIR / "output" / datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Base output dir; the agent creates the per-run <timestamp> subdir under it.
+    base_output_dir = PROJECT_DIR / "output"
+    base_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Record run history
     history_file = PROJECT_DIR / "logs" / "run_history.json"
@@ -107,6 +107,7 @@ async def main(args):
     start_time = datetime.now()
     success = False
     error_msg = None
+    session_dir = None
 
     try:
         # Preflight: figure extraction is required — don't start without it.
@@ -114,13 +115,14 @@ async def main(args):
         if not ok:
             raise RuntimeError(msg)
 
-        # Create Agent
+        # Create Agent (it makes its own <timestamp> session dir under base_output_dir)
         agent = XHSPaperEngineAgent(
             max_steps=50,
             verbose=True,
             work_dir=str(PROJECT_DIR / "work"),
-            output_dir=str(output_dir)
+            output_dir=str(base_output_dir)
         )
+        session_dir = agent.session_dir
 
         # Build the task: either a user-specified local PDF, or the daily search.
         if args.pdf:
@@ -160,7 +162,7 @@ async def main(args):
             "success": success,
             "error": error_msg,
             "duration_seconds": duration,
-            "output_dir": str(output_dir)
+            "output_dir": str(session_dir) if session_dir else str(base_output_dir)
         })
 
         # Keep only the last 100 records
