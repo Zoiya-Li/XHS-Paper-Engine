@@ -12,7 +12,6 @@ Usage:
 """
 
 import time
-import functools
 from typing import Callable, Type, Tuple, Optional, Any
 
 # Try to import requests exception types
@@ -104,81 +103,3 @@ def call_api_with_retry(
 
     # Theoretically shouldn't reach here
     raise last_exception
-
-
-def retry_decorator(
-    max_retries: int = 3,
-    base_delay: float = 2.0,
-    max_delay: float = 60.0,
-    backoff_factor: float = 2.0,
-    retryable_exceptions: Tuple[Type[Exception], ...] = None,
-    api_name: str = None
-):
-    """
-    Retry decorator with exponential backoff
-
-    Args:
-        max_retries: Maximum retry count
-        base_delay: Base delay time in seconds
-        max_delay: Maximum delay time in seconds
-        backoff_factor: Backoff factor
-        retryable_exceptions: Exception types that trigger retry
-        api_name: API name (for logging, defaults to function name)
-
-    Example:
-        >>> @retry_decorator(max_retries=3, api_name="MyAPI")
-        ... def call_external_api():
-        ...     return requests.get(url)
-    """
-    if retryable_exceptions is None:
-        retryable_exceptions = DEFAULT_RETRYABLE_EXCEPTIONS
-
-    def decorator(func: Callable):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            name = api_name or func.__name__
-            return call_api_with_retry(
-                lambda: func(*args, **kwargs),
-                max_retries=max_retries,
-                base_delay=base_delay,
-                max_delay=max_delay,
-                backoff_factor=backoff_factor,
-                api_name=name,
-                retryable_exceptions=retryable_exceptions
-            )
-        return wrapper
-    return decorator
-
-
-# Pre-configured retry functions for common scenarios
-def retry_llm_call(api_call: Callable, api_name: str = "LLM") -> Any:
-    """LLM API call retry (longer timeout, more retries)"""
-    return call_api_with_retry(
-        api_call,
-        max_retries=3,
-        base_delay=3.0,
-        max_delay=60.0,
-        api_name=api_name
-    )
-
-
-def retry_search_api(api_call: Callable, api_name: str = "Search") -> Any:
-    """Search API call retry (standard configuration)"""
-    return call_api_with_retry(
-        api_call,
-        max_retries=3,
-        base_delay=2.0,
-        max_delay=30.0,
-        api_name=api_name
-    )
-
-
-def retry_local_service(api_call: Callable, api_name: str = "LocalService") -> Any:
-    """Local service call retry (shorter delay)"""
-    return call_api_with_retry(
-        api_call,
-        max_retries=5,
-        base_delay=1.0,
-        max_delay=10.0,
-        api_name=api_name
-    )

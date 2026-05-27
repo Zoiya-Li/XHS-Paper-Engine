@@ -4,39 +4,26 @@ XHS Paper Engine Core Module
 Provides:
 - config: Configuration management
 - retry: Retry mechanism
-- checkpoint: Checkpoint recovery
-- logger: Logging management
-- analytics: Performance data analysis
+- analytics: Publication recording (used for deduplication)
 - dedup: Paper deduplication
-- agent: ReAct Agent (DeepSeek powered)
+- agent: ReAct / function-calling Agent
 - tools: Callable tool set
 """
 
 from .config import config
 from .retry import call_api_with_retry
-from .checkpoint import CheckpointManager
-from .logger import get_logger, log_info, log_success, log_error, log_warning, log_section
 
-# Performance data analysis
+# Publication recording (backs deduplication)
 from .analytics import (
     DatabaseManager,
     PerformanceTracker,
-    AnalyticsReport,
-    AnalyticsCollector,
-    record_publication,
-    record_metrics,
-    print_analytics_report,
     DB_PATH,
 )
 
 # Paper deduplication
-from .dedup import (
-    PaperDeduplicator,
-    filter_published_papers,
-    is_paper_published,
-)
+from .dedup import PaperDeduplicator
 
-# ReAct Agent
+# Agent
 from .agent import (
     ReActAgent,
     XHSPaperEngineAgent,
@@ -60,27 +47,13 @@ __all__ = [
     # Basic modules
     'config',
     'call_api_with_retry',
-    'CheckpointManager',
-    'get_logger',
-    'log_info',
-    'log_success',
-    'log_error',
-    'log_warning',
-    'log_section',
-    # Performance data analysis
+    # Publication recording
     'DatabaseManager',
     'PerformanceTracker',
-    'AnalyticsReport',
-    'AnalyticsCollector',
-    'record_publication',
-    'record_metrics',
-    'print_analytics_report',
     'DB_PATH',
     # Paper deduplication
     'PaperDeduplicator',
-    'filter_published_papers',
-    'is_paper_published',
-    # ReAct Agent
+    # Agent
     'ReActAgent',
     'XHSPaperEngineAgent',
     'AgentTrace',
