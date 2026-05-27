@@ -156,9 +156,13 @@ class ToolRegistry:
         try:
             return await tool.execute(**kwargs)
         except Exception as e:
+            # Surface the traceback instead of silently swallowing it. Hiding it
+            # here is exactly how a NameError in a tool could stay invisible.
+            import traceback
+            print(f"⚠️ Tool '{tool_name}' raised an exception:\n{traceback.format_exc()}")
             return ToolResult(
                 success=False,
-                error=f"Tool execution failed: {str(e)}"
+                error=f"Tool execution failed: {type(e).__name__}: {e}"
             )
 
     def __len__(self) -> int:

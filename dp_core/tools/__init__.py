@@ -15,6 +15,7 @@ from .paper_tools import (
     CheckDuplicateTool,
     SelectBestPaperTool,
     ReadFileTool,
+    ListFilesTool,
 )
 from .writing_tools import (
     WriteBlogTool,
@@ -22,10 +23,11 @@ from .writing_tools import (
 )
 from .publish_tools import (
     PublishXiaohongshuTool,
+    LoginXiaohongshuTool,
+    RecordPublishTool,
 )
 from .analytics_tools import (
-    GetAnalyticsTool,
-    GetPublishRecommendationTool,
+    GetPublishHistoryTool,
 )
 from .vision_optimization_tools import (
     OptimizeXiaohongshuWithVisionTool,
@@ -49,14 +51,16 @@ __all__ = [
     "CheckDuplicateTool",
     "SelectBestPaperTool",
     "ReadFileTool",
+    "ListFilesTool",
     # Writing tools
     "WriteBlogTool",
     "WriteXiaohongshuTool",
     # Publish tools
     "PublishXiaohongshuTool",
+    "LoginXiaohongshuTool",
+    "RecordPublishTool",
     # Analytics tools
-    "GetAnalyticsTool",
-    "GetPublishRecommendationTool",
+    "GetPublishHistoryTool",
     # Vision optimization tools
     "OptimizeXiaohongshuWithVisionTool",
     "AnalyzeImagesWithVisionTool",

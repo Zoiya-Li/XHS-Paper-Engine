@@ -20,7 +20,10 @@ class WriteBlogTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Generate detailed technical blog articles based on paper content. Supports two-stage writing process: draft generation + polishing optimization."
+        return ("Generate a detailed technical blog article (Markdown) from paper content and "
+                "save it to a local file. This is an export tool only — there is no blog "
+                "publisher, so the output is a draft for you to use elsewhere. Supports a "
+                "two-stage writing process: draft generation + polishing.")
 
     @property
     def parameters(self) -> List[ToolParameter]:

@@ -123,11 +123,38 @@ Dependency: pip install playwright && playwright install chromium"""
                     error="No valid image files"
                 )
 
+            # Get configuration
+            from ..config import config
+
+            # Opt-in gate: automated publishing is disabled unless the user
+            # explicitly enables it, because it likely violates Xiaohongshu's ToS.
+            if not config.get("publish.xiaohongshu.enabled", False):
+                return ToolResult(
+                    success=False,
+                    error=(
+                        "Automated publishing is disabled. Set "
+                        "publish.xiaohongshu.enabled: true in config.yaml to opt in. "
+                        "Warning: this likely violates Xiaohongshu's Terms of Service "
+                        "and may get your account banned — use at your own risk."
+                    ),
+                    data={
+                        "action_required": "enable_publishing",
+                        "title": title,
+                        "content": content,
+                        "images": valid_images,
+                        "tags": tags,
+                    }
+                )
+
+            print(
+                "⚠️  Automated publishing to Xiaohongshu may violate its Terms of "
+                "Service and risks account suspension. Proceeding because "
+                "publish.xiaohongshu.enabled is true."
+            )
+
             # Use built-in Playwright publisher
             from ..publishers.xiaohongshu import XiaohongshuPublisher
 
-            # Get configuration
-            from ..config import config
             save_draft = config.get("publish.xiaohongshu.save_as_draft", False)
             visibility = config.get("publish.xiaohongshu.visibility", "private")  # Default only self visible
             max_content_len = config.get("publish.xiaohongshu.max_content_len", 1000)
@@ -368,87 +395,6 @@ class RecordPublishTool(Tool):
                     success=False,
                     error="记录失败"
                 )
-
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
-
-
-@register_tool
-class GetXiaohongshuStatsTool(Tool):
-    """获取小红书笔记流量数据"""
-
-    @property
-    def name(self) -> str:
-        return "get_xiaohongshu_stats"
-
-    @property
-    def description(self) -> str:
-        return """获取小红书笔记的流量统计数据，包括点赞数、评论数、收藏数、分享数等。
-
-用于监控已发布内容的表现，评估内容效果。"""
-
-    @property
-    def parameters(self) -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="feed_id",
-                type="string",
-                description="小红书笔记 ID",
-                required=True
-            ),
-            ToolParameter(
-                name="xsec_token",
-                type="string",
-                description="访问令牌（可选，从 feed 列表获取）",
-                required=False
-            ),
-        ]
-
-    async def execute(
-        self,
-        feed_id: str,
-        xsec_token: str = "",
-        **kwargs
-    ) -> ToolResult:
-        try:
-            from ..publishers.xiaohongshu import XiaohongshuPublisher
-
-            publisher = XiaohongshuPublisher(headless=True)
-
-            try:
-                await publisher.start()
-
-                # 检查登录状态
-                if not await publisher.check_login():
-                    return ToolResult(
-                        success=False,
-                        error="小红书未登录，请先扫码登录"
-                    )
-
-                # 获取流量数据
-                result = await publisher.get_feed_stats(feed_id, xsec_token)
-
-                if result.get("success"):
-                    return ToolResult(
-                        success=True,
-                        data={
-                            "feed_id": feed_id,
-                            "title": result.get("title", ""),
-                            "stats": {
-                                "liked_count": result.get("liked_count", "0"),
-                                "comment_count": result.get("comment_count", "0"),
-                                "collected_count": result.get("collected_count", "0"),
-                                "shared_count": result.get("shared_count", "0"),
-                            }
-                        }
-                    )
-                else:
-                    return ToolResult(
-                        success=False,
-                        error=result.get("message", "获取数据失败")
-                    )
-            finally:
-                await publisher.stop()
 
         except Exception as e:
             return ToolResult(success=False, error=str(e))

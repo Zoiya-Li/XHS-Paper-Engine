@@ -22,7 +22,6 @@ import requests
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from io import BytesIO
 
 
 def _resolve_storage_path(relative_path: str) -> Path:
@@ -38,6 +37,101 @@ def _resolve_storage_path(relative_path: str) -> Path:
     return new_path
 
 
+# ===========================================================================
+# Xiaohongshu creator-backend selectors
+#
+# ⚠️ FRAGILITY WARNING: every selector below targets the Xiaohongshu web
+# frontend (creator.xiaohongshu.com). Xiaohongshu can change its markup at any
+# time, and when it does these selectors stop matching and publishing breaks.
+# This is inherent to UI automation — there is no stable public API here.
+#
+# If publishing suddenly fails ("element not found" + a debug screenshot under
+# ~/.xhs-paper-engine/debug/), inspect the page, update the lists below, and
+# bump SELECTORS_LAST_VERIFIED. Order matters: most specific / most reliable
+# selector first.
+# ===========================================================================
+SELECTORS_LAST_VERIFIED = "2024-06 (unverified since; update when you confirm)"
+
+# Switch the publish page from "video" to "image+text" mode
+IMAGE_TAB_SELECTORS = [
+    'text=上传图文',
+    'div:has-text("上传图文")',
+    '[class*="tab"]:has-text("图文")',
+    '[class*="tab"]:has-text("上传图文")',
+    'span:has-text("上传图文")',
+]
+# The hidden <input type=file> that accepts the images
+UPLOAD_INPUT_SELECTORS = [
+    '.upload-input',
+    'input[type="file"]',
+    'input[accept*="image"]',
+    '.upload-input input',
+    '[class*="upload"] input[type="file"]',
+]
+# Already-uploaded image thumbnails (used to count upload progress)
+UPLOADED_IMAGE_SELECTORS = [
+    '[class*="image-item"]',
+    '[class*="upload-item"]',
+    '[class*="preview"] img',
+    '.image-list img',
+    '[class*="publish-image"]',
+]
+TITLE_INPUT_SELECTORS = [
+    'div.d-input input',
+    'input[placeholder*="标题"]',
+    '[class*="title"] input',
+    '#title',
+]
+CONTENT_EDITOR_SELECTORS = [
+    'div.ql-editor',
+    '[contenteditable="true"]',
+    '[placeholder*="正文"]',
+    '[class*="content"] textarea',
+    '#content',
+]
+VISIBILITY_DROPDOWN_SELECTORS = [
+    'text=公开可见',
+    ':has-text("公开可见")',
+    '[class*="visible"] >> text=公开',
+    'div:has-text("可见范围") >> text=公开可见',
+]
+PRIVATE_OPTION_SELECTORS = [
+    'text=仅自己可见',
+    ':has-text("仅自己可见")',
+    '[class*="option"]:has-text("仅自己")',
+]
+DRAFT_BUTTON_SELECTORS = [
+    'text=暂存离开',
+    ':has-text("暂存离开")',
+    'button:has-text("暂存离开")',
+    'div:has-text("暂存离开")',
+    'text=暂存',
+    'text=存草稿',
+    ':has-text("暂存")',
+    ':has-text("存草稿")',
+]
+CONFIRM_BUTTON_SELECTORS = [
+    'button:has-text("确认")',
+    'button:has-text("确定")',
+    'button:has-text("离开")',
+    '[class*="confirm"]',
+]
+PUBLISH_BUTTON_SELECTORS = [
+    'div.submit div.d-button-content',
+    'button:has-text("发布")',
+    'button[class*="publish"]',
+    'button:has-text("发布笔记")',
+    '[class*="submit"] button',
+]
+SUCCESS_INDICATOR_SELECTORS = [
+    '[class*="success"]',
+    '[class*="toast"]:has-text("成功")',
+    '[class*="toast"]:has-text("发布")',
+]
+# Presence of any of these on the creator home implies a logged-in session
+LOGIN_INDICATOR_SELECTORS = '.user-info, .user-avatar, [class*="avatar"]'
+
+
 class XiaohongshuPublisher:
     """Xiaohongshu Publisher"""
 
@@ -46,9 +140,6 @@ class XiaohongshuPublisher:
     LOGIN_URL = "https://creator.xiaohongshu.com/login"
     # Directly use target=image parameter to enter image-text upload page
     PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish?from=menu&target=image"
-
-    # Xiaohongshu main site (for getting traffic data)
-    EXPLORE_URL = "https://www.xiaohongshu.com/explore"
 
     def __init__(self, cookies_path: Optional[str] = None, headless: bool = False):
         """
@@ -105,6 +196,29 @@ class XiaohongshuPublisher:
         if self.playwright:
             await self.playwright.stop()
 
+    async def _save_debug_screenshot(self, name: str) -> str:
+        """Save a timestamped debug screenshot and return its path (best effort)."""
+        try:
+            debug_dir = _resolve_storage_path("debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            path = debug_dir / f"{name}_{ts}.png"
+            await self.page.screenshot(path=str(path))
+            return str(path)
+        except Exception:
+            return ""
+
+    async def _query_first_visible(self, selectors):
+        """Return the first matching visible element handle, or None."""
+        for selector in selectors:
+            try:
+                elem = await self.page.query_selector(selector)
+                if elem and await elem.is_visible():
+                    return elem
+            except Exception:
+                continue
+        return None
+
     async def _save_cookies(self):
         """Save cookies to file"""
         cookies = await self.context.cookies()
@@ -142,7 +256,7 @@ class XiaohongshuPublisher:
             # Check if there is user avatar or other login indicators
             try:
                 # Try to find user info element
-                user_info = await self.page.query_selector('.user-info, .user-avatar, [class*="avatar"]')
+                user_info = await self.page.query_selector(LOGIN_INDICATOR_SELECTORS)
                 if user_info:
                     return True
             except:
@@ -278,14 +392,7 @@ class XiaohongshuPublisher:
         """Count number of uploaded images"""
         try:
             # Try multiple selectors to find uploaded images
-            selectors = [
-                '[class*="image-item"]',
-                '[class*="upload-item"]',
-                '[class*="preview"] img',
-                '.image-list img',
-                '[class*="publish-image"]'
-            ]
-            for selector in selectors:
+            for selector in UPLOADED_IMAGE_SELECTORS:
                 images = await self.page.query_selector_all(selector)
                 if images:
                     return len(images)
@@ -398,22 +505,9 @@ class XiaohongshuPublisher:
             print("   Switching to image-text upload mode...")
             tab_clicked = False
 
-            # Try multiple ways to click tab
-            tab_click_methods = [
-                # Method 1: text match
-                lambda: self.page.click('text=上传图文'),
-                # Method 2: div containing text
-                lambda: self.page.click('div:has-text("上传图文")'),
-                # Method 3: tab class selector
-                lambda: self.page.click('[class*="tab"]:has-text("图文")'),
-                lambda: self.page.click('[class*="tab"]:has-text("上传图文")'),
-                # Method 4: span element
-                lambda: self.page.click('span:has-text("上传图文")'),
-            ]
-
-            for click_method in tab_click_methods:
+            for selector in IMAGE_TAB_SELECTORS:
                 try:
-                    await click_method()
+                    await self.page.click(selector, timeout=3000)
                     print("   ✅ Clicked image-text upload tab")
                     tab_clicked = True
                     await asyncio.sleep(2)
@@ -421,44 +515,48 @@ class XiaohongshuPublisher:
                 except:
                     continue
 
+            # Not fatal: the page may already default to image-text mode.
             if not tab_clicked:
-                print("   ⚠️ Image-text upload tab not found, trying to continue...")
+                print("   ⚠️ Image-text upload tab not found; assuming already in image mode.")
 
             # Upload images
             # Reference xiaohongshu-mcp: uploadInput := pp.MustElement(".upload-input")
             print(f"📸 Uploading images ({len(valid_images)})...")
             await asyncio.sleep(2)
 
-            # Try multiple selectors to find upload input
+            # Find the file input (critical — without it we cannot publish)
             upload_input = None
-            upload_selectors = [
-                '.upload-input',           # Selector used by xiaohongshu-mcp
-                'input[type="file"]',
-                'input[accept*="image"]',
-                '.upload-input input',
-                '[class*="upload"] input[type="file"]'
-            ]
-
-            for selector in upload_selectors:
+            for selector in UPLOAD_INPUT_SELECTORS:
                 upload_input = await self.page.query_selector(selector)
                 if upload_input:
                     print(f"   Found upload input: {selector}")
                     break
 
-            if upload_input:
-                # Batch upload images
-                await upload_input.set_input_files(valid_images)
-                print("   ✅ Images uploading...")
+            if not upload_input:
+                # Hard failure: the page structure likely changed.
+                shot = await self._save_debug_screenshot("xhs_upload_input_not_found")
+                result["message"] = (
+                    "Image upload input not found — Xiaohongshu's page markup likely "
+                    f"changed. Update UPLOAD_INPUT_SELECTORS in publishers/xiaohongshu.py "
+                    f"(selectors last verified: {SELECTORS_LAST_VERIFIED}). "
+                    f"Debug screenshot: {shot or 'n/a'}"
+                )
+                return result
 
-                # Wait for image upload to complete
-                uploaded_count = await self._wait_for_upload_complete(len(valid_images))
-                print(f"   ✅ Uploaded {uploaded_count}/{len(valid_images)} images")
-            else:
-                # Save screenshot for debugging
-                screenshot_path = _resolve_storage_path("xhs_upload_failed.png")
-                await self.page.screenshot(path=str(screenshot_path))
-                print(f"   ⚠️ Upload entry not found, screenshot saved: {screenshot_path}")
-                result["message"] = f"Image upload entry not found. Screenshot saved to {screenshot_path}"
+            # Batch upload images
+            await upload_input.set_input_files(valid_images)
+            print("   ✅ Images uploading...")
+
+            # Wait for image upload to complete
+            uploaded_count = await self._wait_for_upload_complete(len(valid_images))
+            print(f"   ✅ Uploaded {uploaded_count}/{len(valid_images)} images")
+
+            if uploaded_count == 0:
+                shot = await self._save_debug_screenshot("xhs_upload_failed")
+                result["message"] = (
+                    "No images appear to have uploaded (the upload may have failed or the "
+                    f"progress selectors changed). Debug screenshot: {shot or 'n/a'}"
+                )
                 return result
 
             # Wait for entering edit page
@@ -467,15 +565,8 @@ class XiaohongshuPublisher:
             # Input title
             # Reference xiaohongshu-mcp: titleElem := page.MustElement("div.d-input input")
             print(f"📝 Inputting title: {title}")
-            title_selectors = [
-                'div.d-input input',        # Selector used by xiaohongshu-mcp
-                'input[placeholder*="标题"]',
-                '[class*="title"] input',
-                '#title'
-            ]
-
             title_filled = False
-            for selector in title_selectors:
+            for selector in TITLE_INPUT_SELECTORS:
                 try:
                     title_input = await self.page.query_selector(selector)
                     if title_input:
@@ -485,22 +576,15 @@ class XiaohongshuPublisher:
                 except:
                     continue
 
+            # Not fatal (Xiaohongshu can derive a title), but warn loudly.
             if not title_filled:
-                print("   ⚠️ Title input not found")
+                print("   ⚠️ Title input not found; publishing without an explicit title.")
 
             # Input content
             # Reference xiaohongshu-mcp: contentElem := getContentElement(page) -> "div.ql-editor"
             print(f"📝 Inputting content ({len(content)} chars)...")
-            content_selectors = [
-                'div.ql-editor',            # Selector used by xiaohongshu-mcp
-                '[contenteditable="true"]',
-                '[placeholder*="正文"]',
-                '[class*="content"] textarea',
-                '#content'
-            ]
-
             content_elem = None
-            for selector in content_selectors:
+            for selector in CONTENT_EDITOR_SELECTORS:
                 try:
                     content_elem = await self.page.query_selector(selector)
                     if content_elem:
@@ -510,7 +594,15 @@ class XiaohongshuPublisher:
                     continue
 
             if not content_elem:
-                print("   ⚠️ Content input not found")
+                # Hard failure: publishing an empty note is worse than failing loudly.
+                shot = await self._save_debug_screenshot("xhs_content_editor_not_found")
+                result["message"] = (
+                    "Content editor not found — refusing to publish an empty note. "
+                    "Xiaohongshu's markup likely changed; update CONTENT_EDITOR_SELECTORS "
+                    f"in publishers/xiaohongshu.py (selectors last verified: "
+                    f"{SELECTORS_LAST_VERIFIED}). Debug screenshot: {shot or 'n/a'}"
+                )
+                return result
 
             # Add topic tags
             # Reference xiaohongshu-mcp: inputTags(contentElem, tags)
@@ -525,49 +617,27 @@ class XiaohongshuPublisher:
             if visibility == "private":
                 print("🔒 Setting visibility: Only self visible")
                 try:
-                    # First click "Visibility Range" dropdown
-                    visibility_selectors = [
-                        'text=公开可见',
-                        ':has-text("公开可见")',
-                        '[class*="visible"] >> text=公开',
-                        'div:has-text("可见范围") >> text=公开可见',
-                    ]
+                    # First open the "Visibility Range" dropdown
+                    dropdown = await self._query_first_visible(VISIBILITY_DROPDOWN_SELECTORS)
+                    if dropdown:
+                        await dropdown.click()
+                        print("   ✅ Clicked visibility dropdown")
+                        await asyncio.sleep(1)
 
-                    dropdown_clicked = False
-                    for selector in visibility_selectors:
-                        try:
-                            elem = await self.page.query_selector(selector)
-                            if elem and await elem.is_visible():
-                                await elem.click()
-                                dropdown_clicked = True
-                                print(f"   ✅ Clicked visibility dropdown")
-                                await asyncio.sleep(1)
-                                break
-                        except:
-                            continue
-
-                    if dropdown_clicked:
-                        # Select "Only self visible"
-                        private_selectors = [
-                            'text=仅自己可见',
-                            ':has-text("仅自己可见")',
-                            '[class*="option"]:has-text("仅自己")',
-                        ]
-
-                        for selector in private_selectors:
-                            try:
-                                elem = await self.page.query_selector(selector)
-                                if elem and await elem.is_visible():
-                                    await elem.click()
-                                    print(f"   ✅ Set to only self visible")
-                                    await asyncio.sleep(1)
-                                    break
-                            except:
-                                continue
+                        # Then pick "Only self visible"
+                        private_opt = await self._query_first_visible(PRIVATE_OPTION_SELECTORS)
+                        if private_opt:
+                            await private_opt.click()
+                            print("   ✅ Set to only self visible")
+                            await asyncio.sleep(1)
+                        else:
+                            print("   ⚠️ 'Only self visible' option not found; visibility may stay public!")
                     else:
-                        print("   ⚠️ Visibility dropdown not found, will use default setting")
+                        # This matters for privacy — warn prominently rather than silently.
+                        print("   ⚠️ Visibility dropdown not found; the note may be PUBLIC. "
+                              "Verify manually or update VISIBILITY_DROPDOWN_SELECTORS.")
                 except Exception as e:
-                    print(f"   ⚠️ Failed to set visibility: {e}")
+                    print(f"   ⚠️ Failed to set visibility (note may be PUBLIC): {e}")
 
             if save_draft:
                 # Save draft
@@ -581,20 +651,8 @@ class XiaohongshuPublisher:
                 await self.page.screenshot(path=str(debug_dir / f"xhs_before_save_{timestamp}.png"))
                 print(f"   Debug screenshot: {debug_dir / f'xhs_before_save_{timestamp}.png'}")
 
-                # Xiaohongshu Creator Center draft save button selectors
-                # Button text is "暂存离开"
-                draft_selectors = [
-                    # Exact match "暂存离开"
-                    'text=暂存离开',
-                    ':has-text("暂存离开")',
-                    'button:has-text("暂存离开")',
-                    'div:has-text("暂存离开")',
-                    # Other possible selectors
-                    'text=暂存',
-                    'text=存草稿',
-                    ':has-text("暂存")',
-                    ':has-text("存草稿")',
-                ]
+                # Xiaohongshu Creator Center draft save button (text "暂存离开")
+                draft_selectors = DRAFT_BUTTON_SELECTORS
 
                 draft_clicked = False
                 clicked_selector = None
@@ -617,14 +675,7 @@ class XiaohongshuPublisher:
                     await asyncio.sleep(2)
 
                     # Check if there is confirmation dialog
-                    confirm_selectors = [
-                        'button:has-text("确认")',
-                        'button:has-text("确定")',
-                        'button:has-text("离开")',
-                        '[class*="confirm"]',
-                    ]
-
-                    for confirm_sel in confirm_selectors:
+                    for confirm_sel in CONFIRM_BUTTON_SELECTORS:
                         try:
                             confirm_btn = await self.page.query_selector(confirm_sel)
                             if confirm_btn and await confirm_btn.is_visible():
@@ -666,18 +717,10 @@ class XiaohongshuPublisher:
                 # Publish
                 # Reference xiaohongshu-mcp: submitButton -> "div.submit div.d-button-content"
                 print("🚀 Publishing note...")
-                publish_selectors = [
-                    'div.submit div.d-button-content',  # Selector used by xiaohongshu-mcp
-                    'button:has-text("发布")',
-                    'button[class*="publish"]',
-                    'button:has-text("发布笔记")',
-                    '[class*="submit"] button'
-                ]
-
                 publish_clicked = False
-                for selector in publish_selectors:
+                for selector in PUBLISH_BUTTON_SELECTORS:
                     try:
-                        await self.page.click(selector)
+                        await self.page.click(selector, timeout=3000)
                         publish_clicked = True
                         print(f"   Clicked publish button: {selector}")
                         break
@@ -691,13 +734,7 @@ class XiaohongshuPublisher:
                     current_url = self.page.url
 
                     # Check success indicators
-                    success_indicators = [
-                        '[class*="success"]',
-                        '[class*="toast"]:has-text("成功")',
-                        '[class*="toast"]:has-text("发布")'
-                    ]
-
-                    for indicator in success_indicators:
+                    for indicator in SUCCESS_INDICATOR_SELECTORS:
                         success_elem = await self.page.query_selector(indicator)
                         if success_elem:
                             result["success"] = True
@@ -705,19 +742,33 @@ class XiaohongshuPublisher:
                             break
 
                     if not result["success"]:
+                        # Outcome is ambiguous — capture a screenshot so the user can verify.
+                        shot = await self._save_debug_screenshot("xhs_publish_outcome")
                         if 'publish' not in current_url or 'success' in current_url:
                             result["success"] = True
-                            result["message"] = "Publish possibly successful (please manually confirm)"
+                            result["message"] = (
+                                f"Publish likely succeeded (please confirm manually). "
+                                f"Screenshot: {shot or 'n/a'}"
+                            )
                         else:
                             # Check if there is error message
                             error_elem = await self.page.query_selector('[class*="error"], [class*="toast"]')
                             if error_elem:
                                 error_text = await error_elem.inner_text()
-                                result["message"] = f"Publish failed: {error_text}"
+                                result["message"] = f"Publish failed: {error_text}. Screenshot: {shot or 'n/a'}"
                             else:
-                                result["message"] = "Publish status unknown, please manually check"
+                                result["message"] = (
+                                    f"Publish status unknown, please check manually. "
+                                    f"Screenshot: {shot or 'n/a'}"
+                                )
                 else:
-                    result["message"] = "Publish button not found"
+                    shot = await self._save_debug_screenshot("xhs_publish_button_not_found")
+                    result["message"] = (
+                        "Publish button not found — Xiaohongshu's markup likely changed; "
+                        "update PUBLISH_BUTTON_SELECTORS in publishers/xiaohongshu.py "
+                        f"(selectors last verified: {SELECTORS_LAST_VERIFIED}). "
+                        f"Debug screenshot: {shot or 'n/a'}"
+                    )
 
             return result
 
@@ -731,187 +782,3 @@ class XiaohongshuPublisher:
             except:
                 pass
             return result
-
-    async def get_feed_stats(self, feed_id: str, xsec_token: str = "") -> Dict[str, Any]:
-        """
-        Get traffic statistics data for note
-        Reference implementation from xiaohongshu-mcp's GetFeedDetail
-
-        Args:
-            feed_id: Note ID
-            xsec_token: Access token (optional)
-
-        Returns:
-            Traffic data (likes, comments, favorites, etc.)
-        """
-        try:
-            # Build detail page URL
-            url = f"https://www.xiaohongshu.com/explore/{feed_id}"
-            if xsec_token:
-                url += f"?xsec_token={xsec_token}&xsec_source=pc_feed"
-
-            await self.page.goto(url, wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(3)
-
-            # Extract data from window.__INITIAL_STATE__
-            # Reference implementation from xiaohongshu-mcp
-            result = await self.page.evaluate('''() => {
-                if (window.__INITIAL_STATE__ &&
-                    window.__INITIAL_STATE__.note &&
-                    window.__INITIAL_STATE__.note.noteDetailMap) {
-                    const noteDetailMap = window.__INITIAL_STATE__.note.noteDetailMap;
-                    return JSON.stringify(noteDetailMap);
-                }
-                return "";
-            }''')
-
-            if result:
-                data = json.loads(result)
-                # Extract interaction data
-                for key, value in data.items():
-                    if 'note' in value:
-                        note = value['note']
-                        interact_info = note.get('interactInfo', {})
-                        return {
-                            "success": True,
-                            "feed_id": feed_id,
-                            "title": note.get('title', ''),
-                            "liked_count": interact_info.get('likedCount', '0'),
-                            "comment_count": interact_info.get('commentCount', '0'),
-                            "collected_count": interact_info.get('collectedCount', '0'),
-                            "shared_count": interact_info.get('sharedCount', '0'),
-                        }
-
-            return {
-                "success": False,
-                "message": "Cannot get note data"
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Failed to get traffic data: {str(e)}"
-            }
-
-    async def get_my_feeds(self) -> List[Dict[str, Any]]:
-        """
-        Get my note list
-        Reference implementation from xiaohongshu-mcp's GetFeeds
-
-        Returns:
-            Note list
-        """
-        try:
-            await self.page.goto(self.EXPLORE_URL, wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(3)
-
-            # Extract data from window.__INITIAL_STATE__
-            result = await self.page.evaluate('''() => {
-                if (window.__INITIAL_STATE__ &&
-                    window.__INITIAL_STATE__.feed &&
-                    window.__INITIAL_STATE__.feed.feeds) {
-                    const feeds = window.__INITIAL_STATE__.feed.feeds;
-                    const feedsData = feeds.value !== undefined ? feeds.value : feeds._value;
-                    if (feedsData) {
-                        return JSON.stringify(feedsData);
-                    }
-                }
-                return "";
-            }''')
-
-            if result:
-                return json.loads(result)
-
-            return []
-
-        except Exception as e:
-            print(f"Failed to get note list: {e}")
-            return []
-
-
-class XiaohongshuPublisherSync:
-    """Synchronous version of Xiaohongshu publisher (for non-async environments)"""
-
-    def __init__(self, cookies_path: Optional[str] = None, headless: bool = False):
-        self.publisher = XiaohongshuPublisher(cookies_path, headless)
-
-    def _run(self, coro):
-        """Run coroutine"""
-        return asyncio.get_event_loop().run_until_complete(coro)
-
-    def start(self):
-        return self._run(self.publisher.start())
-
-    def stop(self):
-        return self._run(self.publisher.stop())
-
-    def check_login(self) -> bool:
-        return self._run(self.publisher.check_login())
-
-    def login_with_qrcode(self, timeout: int = 120) -> bool:
-        return self._run(self.publisher.login_with_qrcode(timeout))
-
-    def publish(
-        self,
-        title: str,
-        content: str,
-        images: List[str],
-        tags: Optional[List[str]] = None,
-        location: Optional[str] = None,
-        save_draft: bool = False,
-        visibility: str = "private"
-    ) -> Dict[str, Any]:
-        return self._run(self.publisher.publish(title, content, images, tags, location, save_draft, visibility))
-
-    def get_feed_stats(self, feed_id: str, xsec_token: str = "") -> Dict[str, Any]:
-        return self._run(self.publisher.get_feed_stats(feed_id, xsec_token))
-
-
-# Convenience functions
-async def publish_to_xiaohongshu(
-    title: str,
-    content: str,
-    images: List[str],
-    tags: Optional[List[str]] = None,
-    headless: bool = False
-) -> Dict[str, Any]:
-    """
-    Convenience function for publishing to Xiaohongshu
-
-    Args:
-        title: Title
-        content: Content
-        images: Image path list (supports URLs)
-        tags: Topic tags
-        headless: Whether to use headless mode
-
-    Returns:
-        Publish result
-    """
-    publisher = XiaohongshuPublisher(headless=headless)
-    try:
-        await publisher.start()
-
-        # Check login
-        if not await publisher.check_login():
-            print("\n⚠️ Need to login to Xiaohongshu")
-            success = await publisher.login_with_qrcode()
-            if not success:
-                return {"success": False, "message": "Login failed"}
-
-        # Publish
-        return await publisher.publish(title, content, images, tags)
-
-    finally:
-        await publisher.stop()
-
-
-def publish_to_xiaohongshu_sync(
-    title: str,
-    content: str,
-    images: List[str],
-    tags: Optional[List[str]] = None,
-    headless: bool = False
-) -> Dict[str, Any]:
-    """Synchronous version of publish function"""
-    return asyncio.run(publish_to_xiaohongshu(title, content, images, tags, headless))

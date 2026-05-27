@@ -210,35 +210,28 @@ class OptimizeXiaohongshuWithVisionTool(Tool):
                 "content": content_parts
             }]
 
-            # Call vision model using SiliconFlow API
+            # Call vision model using the active provider (SiliconFlow/OpenRouter)
             import requests
-            api_key = client.siliconflow_api_key
-            if not api_key:
-                return ToolResult(
-                    success=False,
-                    error="需要设置 SILICONFLOW_API_KEY 才能使用视觉模型"
-                )
+            try:
+                endpoint = client.get_vision_endpoint()
+            except ValueError as e:
+                return ToolResult(success=False, error=str(e))
 
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-
-            model = config.get("llm.vision.model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
+            headers = endpoint["headers"]
             payload = {
-                "model": model,
+                "model": endpoint["model"],
                 "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": 4000
             }
 
-            timeout = 120
-            max_retries = 3
+            timeout = endpoint["timeout"]
+            max_retries = endpoint["max_retries"]
 
             for attempt in range(max_retries):
                 try:
                     response = requests.post(
-                        f"{config.get('api.siliconflow.base_url', client.SILICONFLOW_BASE)}/chat/completions",
+                        f"{endpoint['base_url']}/chat/completions",
                         headers=headers,
                         json=payload,
                         timeout=timeout
@@ -420,35 +413,28 @@ class AnalyzeImagesWithVisionTool(Tool):
                 "content": content_parts
             }]
 
-            # Call vision model using SiliconFlow API
+            # Call vision model using the active provider (SiliconFlow/OpenRouter)
             import requests
-            api_key = client.siliconflow_api_key
-            if not api_key:
-                return ToolResult(
-                    success=False,
-                    error="需要设置 SILICONFLOW_API_KEY 才能使用视觉模型"
-                )
+            try:
+                endpoint = client.get_vision_endpoint()
+            except ValueError as e:
+                return ToolResult(success=False, error=str(e))
 
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-
-            model = config.get("llm.vision.model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
+            headers = endpoint["headers"]
             payload = {
-                "model": model,
+                "model": endpoint["model"],
                 "messages": messages,
                 "temperature": 0.3,
                 "max_tokens": 4000
             }
 
-            timeout = 120
-            max_retries = 3
+            timeout = endpoint["timeout"]
+            max_retries = endpoint["max_retries"]
 
             for attempt in range(max_retries):
                 try:
                     response = requests.post(
-                        f"{config.get('api.siliconflow.base_url', client.SILICONFLOW_BASE)}/chat/completions",
+                        f"{endpoint['base_url']}/chat/completions",
                         headers=headers,
                         json=payload,
                         timeout=timeout
