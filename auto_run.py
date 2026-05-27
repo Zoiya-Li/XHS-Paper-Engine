@@ -253,12 +253,18 @@ def dry_run(args) -> int:
     print(f"Text model: {config.get('llm.text.model', 'n/a')}")
     print(f"Vision model: {config.get('llm.vision.model', 'n/a')}")
 
+    # Vision (VL) is required; every listed provider serves one.
+    has_vl = bool(PROVIDERS.get(provider, {}).get("vision", False))
+
     figures_ok, figures_msg = _check_figures_stack()
     print(f"Figure extraction stack: {'installed' if figures_ok else 'MISSING (required)'}")
 
     print(f"{'='*50}")
     if not key_set:
         print(f"❌ {key_var} is not configured. Set it in your .env file before running.")
+        return 1
+    if not has_vl:
+        print(f"❌ Provider '{provider}' has no VL model (required). Choose a VL-capable provider.")
         return 1
     if not figures_ok:
         print(f"❌ {figures_msg}")

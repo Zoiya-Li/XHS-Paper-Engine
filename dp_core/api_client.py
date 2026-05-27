@@ -36,51 +36,51 @@ from .config import config
 # can still be set in config.yaml under api.<provider>.*; "custom" lets you point
 # at any other OpenAI-compatible endpoint via api.custom.base_url + CUSTOM_API_KEY.
 # ---------------------------------------------------------------------------
-PROVIDERS: Dict[str, Dict[str, str]] = {
+# This project REQUIRES a vision-language (VL) model (image selection / caption
+# alignment), so every listed provider serves one. `vision_model` is a known-good
+# example id. (Text-only providers like DeepSeek are intentionally not listed.)
+PROVIDERS: Dict[str, Dict[str, Any]] = {
     "siliconflow": {
         "base_url": "https://api.siliconflow.cn/v1",
         "api_key_env": "SILICONFLOW_API_KEY",
         "label": "硅基流动 SiliconFlow (CN)",
-    },
-    "deepseek": {
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key_env": "DEEPSEEK_API_KEY",
-        "label": "DeepSeek 深度求索 (CN)",
+        "vision": True,
+        "vision_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
     },
     "dashscope": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "api_key_env": "DASHSCOPE_API_KEY",
         "label": "阿里云百炼 / 通义千问 DashScope (CN)",
+        "vision": True,
+        "vision_model": "qwen-vl-max",
     },
     "moonshot": {
         "base_url": "https://api.moonshot.cn/v1",
         "api_key_env": "MOONSHOT_API_KEY",
         "label": "月之暗面 Moonshot / Kimi (CN)",
+        "vision": True,
+        "vision_model": "kimi-k2.5",   # multimodal; reasoning model — requires temperature: 1
     },
     "zhipu": {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "api_key_env": "ZHIPU_API_KEY",
         "label": "智谱 AI / GLM (CN)",
-    },
-    "ark": {
-        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-        "api_key_env": "ARK_API_KEY",
-        "label": "火山方舟 Volcengine Ark / 豆包 Doubao (CN)",
-    },
-    "hunyuan": {
-        "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
-        "api_key_env": "HUNYUAN_API_KEY",
-        "label": "腾讯混元 Hunyuan (CN)",
+        "vision": True,
+        "vision_model": "glm-4v-plus",
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "api_key_env": "OPENROUTER_API_KEY",
         "label": "OpenRouter (international aggregator)",
+        "vision": True,
+        "vision_model": "qwen/qwen2.5-vl-72b-instruct",
     },
     "custom": {
         "base_url": "",  # must be provided via config api.custom.base_url
         "api_key_env": "CUSTOM_API_KEY",
         "label": "Custom OpenAI-compatible endpoint",
+        "vision": True,   # assume yes; you control the endpoint/model
+        "vision_model": "",
     },
 }
 
@@ -265,24 +265,26 @@ class APIClient:
 
     def get_vision_endpoint(self) -> Dict[str, Any]:
         """
-        Resolve the vision endpoint for the active provider.
+        Resolve the vision (VL) endpoint for the active provider.
 
-        Returns a dict with: base_url, headers, model, timeout, max_retries.
-        Raises ValueError if no API key is configured for the active provider.
+        Returns a dict with: provider, base_url, headers, model, timeout, max_retries.
+        Raises ValueError if no API key is configured. Every listed provider is
+        VL-capable, so the active provider serves both text and vision.
         """
         provider = self.provider
+        meta = self._provider_meta(provider)
         api_key = self._get_api_key(provider)
         if not api_key:
             raise ValueError(
                 f"No API key configured for provider '{provider}'. "
-                f"Set {self._provider_meta(provider)['api_key_env']} in your .env file."
+                f"Set {meta['api_key_env']} in your .env file."
             )
 
         return {
             "provider": provider,
             "base_url": self._get_base_url(provider),
             "headers": self._get_headers(provider),
-            "model": config.get("llm.vision.model", "Qwen/Qwen3-VL-235B-A22B-Instruct"),
+            "model": config.get("llm.vision.model", meta.get("vision_model") or "Qwen/Qwen3-VL-235B-A22B-Instruct"),
             "timeout": self._get_timeout(provider),
             "max_retries": self._get_max_retries(provider),
         }

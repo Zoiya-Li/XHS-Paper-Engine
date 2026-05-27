@@ -38,19 +38,14 @@ research:
 # ============================================================
 api:
   # LLM provider — any OpenAI-compatible supplier. Set the matching API key in .env.
-  # Chinese suppliers:
-  #   siliconflow  硅基流动        -> SILICONFLOW_API_KEY
-  #   deepseek     DeepSeek 深度求索 -> DEEPSEEK_API_KEY
-  #   dashscope    阿里云百炼/通义   -> DASHSCOPE_API_KEY
-  #   moonshot     月之暗面 Kimi     -> MOONSHOT_API_KEY
-  #   zhipu        智谱 GLM          -> ZHIPU_API_KEY
-  #   ark          火山方舟/豆包     -> ARK_API_KEY
-  #   hunyuan      腾讯混元          -> HUNYUAN_API_KEY
-  # International:
-  #   openrouter   OpenRouter        -> OPENROUTER_API_KEY
+  # All providers below serve a vision (VL) model, which this project REQUIRES.
+  # The selected provider handles both text and vision.
+  #   siliconflow  硅基流动 (CN)       -> SILICONFLOW_API_KEY
+  #   dashscope    阿里云百炼/通义 (CN) -> DASHSCOPE_API_KEY
+  #   moonshot     月之暗面 Kimi (CN)   -> MOONSHOT_API_KEY
+  #   zhipu        智谱 GLM (CN)        -> ZHIPU_API_KEY
+  #   openrouter   OpenRouter (intl)   -> OPENROUTER_API_KEY
   #   custom       any OpenAI-compatible endpoint -> CUSTOM_API_KEY (set api.custom.base_url below)
-  # NOTE: switching provider also means setting a model name that provider serves
-  # (see llm.text.model / llm.vision.model below).
   provider: "siliconflow"
 
   # Optional global defaults (per-provider overrides take precedence)
@@ -71,6 +66,9 @@ llm:
   # Unified text-to-text model (chat/selection/xiaohongshu)
   text:
     model: "deepseek-ai/DeepSeek-V3"
+    # NOTE: some reasoning models only accept temperature: 1 (e.g. Moonshot
+    # kimi-k2.5 returns HTTP 400 otherwise). They also spend tokens on hidden
+    # reasoning, so keep max_tokens generous (>= 4000).
     temperature: 0.7
     max_tokens: 3000
 

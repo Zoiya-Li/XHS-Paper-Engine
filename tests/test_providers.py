@@ -25,8 +25,25 @@ def test_all_providers_have_required_fields():
 
 
 def test_chinese_providers_present():
-    for name in ["siliconflow", "deepseek", "dashscope", "moonshot", "zhipu", "ark", "hunyuan"]:
+    for name in ["siliconflow", "dashscope", "moonshot", "zhipu"]:
         assert name in PROVIDERS
+
+
+def test_text_only_providers_not_listed():
+    # VL is required, so text-only providers (e.g. DeepSeek) must not be offered.
+    assert "deepseek" not in PROVIDERS
+
+
+def test_every_provider_is_vl_capable():
+    # Every listed provider must serve a vision model.
+    for name, meta in PROVIDERS.items():
+        assert meta.get("vision") is True, f"{name} is not VL-capable but is listed"
+
+
+def test_vl_providers_have_a_vision_model_example():
+    for name, meta in PROVIDERS.items():
+        if name != "custom":
+            assert meta.get("vision_model"), f"{name} is VL-capable but has no example vision_model"
 
 
 def test_unknown_provider_falls_back(monkeypatch):
@@ -35,10 +52,17 @@ def test_unknown_provider_falls_back(monkeypatch):
 
 
 def test_selected_provider_resolves_key_and_url(monkeypatch):
-    client = _client_with(monkeypatch, "deepseek", DEEPSEEK_API_KEY="sk-real-deepseek")
-    assert client.provider == "deepseek"
-    assert client._get_api_key("deepseek") == "sk-real-deepseek"
-    assert client._get_base_url("deepseek") == "https://api.deepseek.com/v1"
+    client = _client_with(monkeypatch, "zhipu", ZHIPU_API_KEY="sk-real-zhipu")
+    assert client.provider == "zhipu"
+    assert client._get_api_key("zhipu") == "sk-real-zhipu"
+    assert client._get_base_url("zhipu") == "https://open.bigmodel.cn/api/paas/v4"
+
+
+def test_vision_endpoint_uses_active_provider(monkeypatch):
+    client = _client_with(monkeypatch, "dashscope", DASHSCOPE_API_KEY="sk-qwen")
+    ep = client.get_vision_endpoint()
+    assert ep["provider"] == "dashscope"
+    assert ep["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 def test_headers_use_provider_key(monkeypatch):

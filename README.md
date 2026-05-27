@@ -192,32 +192,32 @@ PDF→text conversion uses PyMuPDF's text layer (no model/API needed) and only f
 
 ### LLM Provider
 
-Any OpenAI-compatible provider is supported — set `api.provider` in `config.yaml`
-and the matching key in `.env`. You only need **one** provider configured.
+Set `api.provider` in `config.yaml` and the matching key in `.env`. You only need
+**one** provider. **A vision (VL) model is required** (to select figures and align
+captions), so every listed provider serves one — the selected provider handles both
+text and vision.
 
-| `api.provider` | Provider | API key env var | Example model (`llm.text.model`) |
-|----------------|----------|-----------------|----------------------------------|
-| `siliconflow` (default) | 硅基流动 SiliconFlow (CN) | `SILICONFLOW_API_KEY` | `deepseek-ai/DeepSeek-V3` |
-| `deepseek` | DeepSeek 深度求索 (CN) | `DEEPSEEK_API_KEY` | `deepseek-chat` |
-| `dashscope` | 阿里云百炼 / 通义千问 (CN) | `DASHSCOPE_API_KEY` | `qwen-plus` |
-| `moonshot` | 月之暗面 Kimi (CN) | `MOONSHOT_API_KEY` | `moonshot-v1-32k` |
-| `zhipu` | 智谱 GLM (CN) | `ZHIPU_API_KEY` | `glm-4-plus` |
-| `ark` | 火山方舟 / 豆包 Doubao (CN) | `ARK_API_KEY` | `doubao-pro-32k` |
-| `hunyuan` | 腾讯混元 (CN) | `HUNYUAN_API_KEY` | `hunyuan-standard` |
-| `openrouter` | OpenRouter (international) | `OPENROUTER_API_KEY` | `deepseek/deepseek-chat` |
+| `api.provider` | Provider | API key env var | Example text / vision model |
+|----------------|----------|-----------------|------------------------------|
+| `siliconflow` (default) | 硅基流动 SiliconFlow (CN) | `SILICONFLOW_API_KEY` | `deepseek-ai/DeepSeek-V3` / `Qwen/Qwen3-VL-235B-A22B-Instruct` |
+| `dashscope` | 阿里云百炼 / 通义千问 (CN) | `DASHSCOPE_API_KEY` | `qwen-plus` / `qwen-vl-max` |
+| `moonshot` | 月之暗面 Kimi (CN) | `MOONSHOT_API_KEY` | `kimi-k2.5` / `kimi-k2.5` (multimodal; set `llm.text.temperature: 1`) |
+| `zhipu` | 智谱 GLM (CN) | `ZHIPU_API_KEY` | `glm-4-plus` / `glm-4v-plus` |
+| `openrouter` | OpenRouter (international) | `OPENROUTER_API_KEY` | `deepseek/deepseek-chat` / `qwen/qwen2.5-vl-72b-instruct` |
 | `custom` | any OpenAI-compatible endpoint | `CUSTOM_API_KEY` | (your model) |
 
 ```yaml
 api:
-  provider: "deepseek"          # pick one from the table above
+  provider: "siliconflow"       # pick one from the table above
 llm:
   text:
-    model: "deepseek-chat"      # must be a model that provider serves
+    model: "deepseek-ai/DeepSeek-V3"            # a text model the provider serves
   vision:
-    model: "..."                # set a vision model the provider serves, if you use image analysis
+    model: "Qwen/Qwen3-VL-235B-A22B-Instruct"   # a VL model the provider serves
 ```
 
-For a self-hosted or otherwise unlisted endpoint, use `custom` and set its URL:
+For a self-hosted / unlisted endpoint, use `custom` (you must point it at a
+VL-capable model):
 
 ```yaml
 api:
@@ -226,7 +226,7 @@ api:
     base_url: "https://your-endpoint.example.com/v1"
 ```
 
-> Note: switching provider means switching the **model names** too — each provider serves different model ids. Vision support also varies (e.g. DeepSeek's API has no vision model); set `llm.vision.model` to something the provider serves, or the image-analysis step will error.
+> Note: switching provider means switching the **model names** too — each serves different model ids. `python auto_run.py --dry-run` checks the provider is VL-capable and has a key, and refuses to run otherwise.
 
 ## Permissions & Login
 
