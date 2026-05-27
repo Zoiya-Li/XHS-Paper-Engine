@@ -171,6 +171,13 @@ async def main(args):
         with open(history_file, 'w') as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
 
+        # After the run, offer to set up a daily schedule (interactive only; this
+        # is a no-op when run under launchd/cron, which have no TTY).
+        try:
+            maybe_prompt_schedule(args)
+        except Exception as e:
+            print(f"(scheduling prompt skipped: {e})")
+
         # Output result
         if success:
             print(f"\n{'='*50}")
@@ -241,6 +248,21 @@ def parse_args(argv=None):
         default=None,
         help="Optional paper title to use with --pdf (otherwise inferred from the PDF)"
     )
+    parser.add_argument(
+        "--install-schedule",
+        action="store_true",
+        help="Install a daily scheduled run for this OS (macOS launchd / Windows / Linux cron) and exit"
+    )
+    parser.add_argument(
+        "--uninstall-schedule",
+        action="store_true",
+        help="Remove the scheduled daily run and exit"
+    )
+    parser.add_argument(
+        "--no-schedule",
+        action="store_true",
+        help="Don't prompt to set up scheduling after the run"
+    )
     return parser.parse_args(argv)
 
 
@@ -293,10 +315,56 @@ def dry_run(args) -> int:
     return 0
 
 
+def maybe_prompt_schedule(args):
+    """After a run, offer to set up a daily schedule — but only when interactive.
+
+    Scheduled/background runs have no TTY, so they never re-prompt (and never
+    recurse). We ask at most once (tracked by a marker file).
+    """
+    if getattr(args, "no_schedule", False):
+        return
+    if not sys.stdin.isatty():       # running under launchd/cron/CI → don't prompt
+        return
+    from dp_core import scheduler
+    if scheduler.is_installed():
+        scheduler.mark_prompted()
+        return
+    if scheduler.already_prompted():
+        return
+    osname = scheduler.detect_os()
+    if osname == "unknown":
+        return
+    scheduler.mark_prompted()
+    try:
+        ans = input(f"\nSet up a daily auto-run via the {osname} scheduler? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if ans in ("y", "yes"):
+        ok, msg = scheduler.install()
+        print(("✅ " if ok else "❌ ") + msg)
+    else:
+        print("Skipped. Enable later with:  python auto_run.py --install-schedule")
+
+
 def run():
     args = parse_args()
+
+    if args.install_schedule:
+        from dp_core import scheduler
+        ok, msg = scheduler.install()
+        print(("✅ " if ok else "❌ ") + msg)
+        sys.exit(0 if ok else 1)
+
+    if args.uninstall_schedule:
+        from dp_core import scheduler
+        ok, msg = scheduler.uninstall()
+        print(("✅ " if ok else "❌ ") + msg)
+        sys.exit(0 if ok else 1)
+
     if args.dry_run:
         sys.exit(dry_run(args))
+
     asyncio.run(main(args))
 
 

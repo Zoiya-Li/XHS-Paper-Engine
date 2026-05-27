@@ -12,7 +12,7 @@ XHS Paper Engine is an intelligent academic paper recommendation and publishing 
 > This project is provided **for learning and research purposes only**. Use it at your own risk.
 >
 > - The Xiaohongshu (Little Red Book) publishing feature uses **browser automation** to operate the creator backend. This **bypasses the official API and very likely violates Xiaohongshu's Terms of Service**, and **may result in your account being restricted or banned**.
-> - Automated publishing is **disabled by default**. You must explicitly opt in via `publish.xiaohongshu.enabled: true` in `config.yaml`. Without it, the pipeline stops after generating a local draft.
+> - Automated publishing is **on by default** (`publish.xiaohongshu.enabled: true`) — this is a publishing tool. Posts default to **private (only-self) visibility** as a safety net. Set `enabled: false` to stop after generating a local draft, and review before making anything public.
 > - This tool generates content with LLMs. **You are responsible** for reviewing accuracy, respecting the cited papers' licenses, and complying with the platform's content rules. Do not use it to mass-produce low-quality or misleading content.
 > - The authors accept **no liability** for account bans, data loss, or any other consequences of using this software.
 >
@@ -287,43 +287,32 @@ XHS Paper Engine provides the following Agent tools:
 
 ## Scheduled Tasks Setup
 
-### macOS (launchd)
+The app can schedule a **daily run for you, cross-platform** — it detects the OS
+and uses the right mechanism (macOS launchd / Windows Task Scheduler / Linux cron).
+
+**Easiest:** after your first interactive run, it asks whether to set up a daily
+schedule. Answer `y` and it's installed. (Scheduled/background runs never re-ask —
+they have no terminal.)
+
+**Or manage it explicitly:**
 
 ```bash
-./setup_schedule.sh install     # Install scheduled tasks (daily at 06:00 and 18:00)
-./setup_schedule.sh status      # Show task status and recent run history
-./setup_schedule.sh test        # Validate environment without running (dry-run)
-./setup_schedule.sh run         # Run once immediately
-./setup_schedule.sh uninstall   # Remove scheduled tasks
+python auto_run.py --install-schedule     # install a daily run (default 09:00) for this OS
+python auto_run.py --uninstall-schedule   # remove it
+python auto_run.py --no-schedule          # run once without the setup prompt
 ```
 
-`install` renders the `launchd/*.plist` templates with your current project path
-and home directory, then loads them. Override the Python interpreter with the
-`XHS_PAPER_ENGINE_PYTHON` environment variable if needed.
+| OS | Mechanism | Where it lives |
+|----|-----------|----------------|
+| macOS | launchd LaunchAgent | `~/Library/LaunchAgents/com.xhs-paper-engine.daily.plist` |
+| Windows | Task Scheduler | task `XHSPaperEngine` |
+| Linux | crontab | a line tagged `# xhs-paper-engine-daily` |
 
-### Linux (crontab)
+It schedules the **current Python interpreter** (your venv) running `auto_run.py`,
+so activate/point at the right environment when installing.
 
-```bash
-# Edit crontab
-crontab -e
-
-# Add the following line (runs at 6:00 and 18:00 daily)
-0 6,18 * * * cd /path/to/xhs-paper-engine && /usr/bin/python3 auto_run.py
-```
-
-### Windows (Task Scheduler)
-
-Option A (GUI):
-1. Open Task Scheduler → Create Task
-2. Action: Start a program
-3. Program/script: `python`
-4. Add arguments: `auto_run.py`
-5. Start in: your XHS Paper Engine project directory
-
-Option B (Command line):
-```bat
-schtasks /Create /TN "XHSPaperEngine" /TR "\"C:\Path\To\python.exe\" \"C:\Path\To\xhs-paper-engine\auto_run.py\"" /SC DAILY /ST 06:00
-```
+> The older macOS-only `setup_schedule.sh` (twice-daily launchd templates) still
+> works if you prefer it, but the built-in `--install-schedule` is the portable path.
 
 ## Development
 
@@ -383,7 +372,7 @@ This pipeline can generate and publish content at scale. Please use it responsib
 - **Respect sources.** Cite papers accurately, honor their licenses, and don't republish figures where licensing forbids it.
 - **Be transparent.** Consider disclosing that content is AI-assisted.
 
-Automated publishing is opt-in (`publish.xiaohongshu.enabled`) precisely so that running the pipeline never posts to a live account by accident.
+Automated publishing is on by default but posts as **private (only-self)** visibility, so review your notes before switching any to public. Set `publish.xiaohongshu.enabled: false` to stop at the draft stage.
 
 ## Security & Privacy
 
