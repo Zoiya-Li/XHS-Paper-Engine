@@ -196,6 +196,18 @@ class APIClient:
                 json=payload,
                 timeout=timeout
             )
+            # Some reasoning models (e.g. Moonshot kimi-k2.5) only accept
+            # temperature=1 and 400 otherwise. Auto-recover once.
+            if (response.status_code == 400
+                    and "temperature" in (response.text or "").lower()
+                    and payload.get("temperature") != 1):
+                payload["temperature"] = 1
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout
+                )
             response.raise_for_status()
             return response.json()
 

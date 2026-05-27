@@ -8,13 +8,12 @@ Uses Qwen3-VL-235B-A22B-Instruct model to:
 """
 
 import base64
-from typing import List, Dict, Any, Optional
+from typing import List
 from pathlib import Path
 from PIL import Image
 import io
 
 from .base import Tool, ToolParameter, ToolResult, register_tool
-from ..config import config
 
 
 def encode_image_to_base64(image_path: str, max_size: int = 2048) -> str:
@@ -257,6 +256,10 @@ class OptimizeXiaohongshuWithVisionTool(Tool):
                             images_to_analyze[i] for i in selected_indices
                             if 0 <= i < len(images_to_analyze)
                         ]
+                        # Fallback: the VL model returned no/invalid indices — keep the
+                        # first few extracted images so the post still has figures.
+                        if not selected_images:
+                            selected_images = images_to_analyze[:max_images]
 
                         return ToolResult(
                             success=True,
@@ -272,13 +275,17 @@ class OptimizeXiaohongshuWithVisionTool(Tool):
                                 "images_selected": len(selected_images)
                             }
                         )
-                    except json.JSONDecodeError as e:
-                        # If JSON parsing fails, return raw content
+                    except json.JSONDecodeError:
+                        # JSON parse failed — keep the original text and use the first
+                        # extracted images so the pipeline can still proceed.
                         return ToolResult(
                             success=True,
                             data={
-                                "raw_response": content_text,
-                                "note": "Failed to parse JSON response, returning raw content"
+                                "optimized_title": title,
+                                "optimized_content": content,
+                                "selected_images": images_to_analyze[:max_images],
+                                "raw_response": content_text[:500],
+                                "note": "Vision response was not valid JSON; kept original text and used the first extracted images."
                             }
                         )
 
