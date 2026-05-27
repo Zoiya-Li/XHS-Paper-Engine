@@ -141,11 +141,29 @@ If you don't provide `S2_API_KEY`, the system still runs normally, and Semantic 
 
 ### 3. Run
 
-#### Run
+```bash
+# Daily mode: search arXiv for recent papers, pick one, generate the post
+python auto_run.py
+
+# Search a wider window
+python auto_run.py --recent-days 7
+
+# Validate environment only (API key, Java + pdffigures2 JAR), no run
+python auto_run.py --dry-run
+```
+
+#### Target a specific paper
+
+Skip the search and process one PDF you provide — put the file anywhere and pass its path:
 
 ```bash
-python auto_run.py
+python auto_run.py --pdf /path/to/paper.pdf
+python auto_run.py --pdf /path/to/paper.pdf --title "Attention Is All You Need"
 ```
+
+In this mode the pipeline extracts figures from your PDF, derives the title/abstract
+(or uses `--title`), writes the post, and runs vision optimization. If the PDF has no
+extractable figures it reports the paper as unsuitable (it won't switch to another one).
 
 ## Configuration
 

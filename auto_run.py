@@ -20,6 +20,80 @@ from dp_core.agent import XHSPaperEngineAgent
 from dp_core.config import config
 
 
+def build_search_task(keywords, days, s2_enabled) -> str:
+    """Daily task: search arXiv (and optionally Semantic Scholar), select, publish."""
+    search_steps = []
+    step = 1
+    for kw in keywords:
+        prefix = "" if step == 1 else "If no results: "
+        search_steps.append(f'{step}. {prefix}Search arXiv for "{kw}" from past {days} days')
+        step += 1
+    if s2_enabled:
+        s2_days = max(days, 7)
+        for kw in keywords:
+            search_steps.append(
+                f'{step}. If no results: search Semantic Scholar for "{kw}" from past {s2_days} days'
+            )
+            step += 1
+    search_block = "\n        ".join(search_steps)
+
+    return f"""
+        Complete today's paper recommendation and publishing task:
+
+        **Phase 1: Paper Search** (try in order until papers are found)
+        {search_block}
+
+        **Phase 2: Paper Selection** (once papers are found)
+        {step}. Check for duplicates (pass the papers with titles to check_duplicate)
+        {step + 1}. Select the best paper using select_best_paper
+        {step + 2}. Download the paper PDF
+        {step + 3}. Extract figures and tables from the PDF
+        {step + 4}. Convert the PDF to Markdown
+        - If extract_figures finds NO figures, that paper is unsuitable — go back and pick a
+          different unpublished paper (never publish full-page screenshots).
+
+        **Phase 3: Content Creation**
+        {step + 5}. Write a Xiaohongshu post about the paper
+        {step + 6}. Use optimize_xiaohongshu_with_vision to refine it and select 3-5 best images
+
+        **Phase 4: Publishing**
+        {step + 7}. Publish to Xiaohongshu (private), then record_publish
+
+        **Important**:
+        - Keep trying different search strategies until at least one paper is found.
+        - The vision optimization step is important — don't skip it.
+        """
+
+
+def build_single_paper_task(pdf_path: str, title: str = None) -> str:
+    """Targeted task: process one user-provided local PDF (skip search/selection)."""
+    title_line = (
+        f'The paper title is: "{title}".'
+        if title else
+        "Determine the paper's title and abstract from the converted Markdown (usually page 1)."
+    )
+    return f"""
+        Process this specific paper the user provided. Do NOT search for papers.
+
+        The paper PDF is located at:
+        {pdf_path}
+
+        Steps:
+        1. Extract figures and tables from this PDF with extract_figures (use the path above).
+           - If it yields NO figures, this paper is unsuitable for an image-heavy post — report
+             that and stop. Do NOT switch to a different paper; the user chose this one.
+        2. Convert the PDF to Markdown with convert_pdf_to_markdown.
+        3. {title_line}
+        4. Write a Xiaohongshu post with write_xiaohongshu (pass the title, abstract, and the
+           converted Markdown as paper_content).
+        5. Use optimize_xiaohongshu_with_vision to refine the post and select 3-5 best images.
+        6. Publish to Xiaohongshu (private), then record_publish (use the PDF file name as the
+           identifier, since there is no arXiv ID).
+
+        The vision optimization step is important — don't skip it.
+        """
+
+
 async def main(args):
     """Run daily recommendation task"""
     # Create output directory
@@ -48,86 +122,19 @@ async def main(args):
             output_dir=str(output_dir)
         )
 
-        # Build task based on available sources and configured keywords
-        s2_enabled = _is_real_key(os.getenv("S2_API_KEY", ""))
-
-        keywords = config.get("research.keywords", ["LLM"])
-        days = args.recent_days if args.recent_days is not None else config.get("research.days", 3)
-        keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()]
-        if not keywords:
-            keywords = ["LLM"]
-
-        search_steps = []
-        step = 1
-        for kw in keywords:
-            prefix = "" if step == 1 else "If no results: "
-            search_steps.append(
-                f'{step}. {prefix}Search arXiv for "{kw}" from past {days} days'
-            )
-            step += 1
-
-        if s2_enabled:
-            s2_days = max(days, 7)
-            for kw in keywords:
-                search_steps.append(
-                    f'{step}. If no results: search Semantic Scholar for "{kw}" from past {s2_days} days'
-                )
-                step += 1
-
-        search_block = "\n        ".join(search_steps)
-
-        phase2_steps = [
-            "Check for duplicates (compare with previously published papers)",
-            "Select the best paper using select_best_paper tool",
-            "Download paper PDF",
-            "Extract figures and tables from PDF",
-            "Convert PDF to Markdown format",
-        ]
-        phase3_steps = [
-            "Write Xiaohongshu post about the paper",
-            "Use optimize_xiaohongshu_with_vision to optimize the post and select best images (3-5 images)",
-        ]
-        phase4_steps = [
-            "Publish to Xiaohongshu (set to private visibility)",
-            "Record publish history",
-        ]
-
-        def _format_steps(start: int, items: list) -> tuple[list, int]:
-            lines = []
-            current = start
-            for item in items:
-                lines.append(f"{current}. {item}")
-                current += 1
-            return lines, current
-
-        phase2_lines, step = _format_steps(step, phase2_steps)
-        phase3_lines, step = _format_steps(step, phase3_steps)
-        phase4_lines, step = _format_steps(step, phase4_steps)
-        phase2_block = "\n        ".join(phase2_lines)
-        phase3_block = "\n        ".join(phase3_lines)
-        phase4_block = "\n        ".join(phase4_lines)
-
-        # Run daily task
-        task = f"""
-        Complete today's paper recommendation and publishing task:
-
-        **Phase 1: Paper Search** (try in order until papers are found)
-        {search_block}
-
-        **Phase 2: Paper Selection** (once papers are found)
-        {phase2_block}
-
-        **Phase 3: Content Creation** (for selected paper)
-        {phase3_block}
-
-        **Phase 4: Publishing**
-        {phase4_block}
-
-        **Important Notes**:
-        - Keep trying different search strategies until you find at least one paper
-        - If absolutely no papers found after all attempts, report the specific search terms tried and suggest alternative topics
-        - The vision optimization step is important - don't skip it
-        """
+        # Build the task: either a user-specified local PDF, or the daily search.
+        if args.pdf:
+            pdf_path = Path(args.pdf).expanduser().resolve()
+            if not pdf_path.is_file():
+                raise FileNotFoundError(f"--pdf not found: {pdf_path}")
+            print(f"📄 Targeting a specific paper: {pdf_path}")
+            task = build_single_paper_task(str(pdf_path), args.title)
+        else:
+            s2_enabled = _is_real_key(os.getenv("S2_API_KEY", ""))
+            keywords = config.get("research.keywords", ["LLM"])
+            keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()] or ["LLM"]
+            days = args.recent_days if args.recent_days is not None else config.get("research.days", 3)
+            task = build_search_task(keywords, days, s2_enabled)
 
         result = await agent.run(task.strip())
         success = result.success
@@ -220,6 +227,17 @@ def parse_args(argv=None):
         type=int,
         default=None,
         help="Override research.days: search papers from the past N days"
+    )
+    parser.add_argument(
+        "--pdf",
+        default=None,
+        metavar="PATH",
+        help="Process a specific local PDF instead of searching arXiv"
+    )
+    parser.add_argument(
+        "--title",
+        default=None,
+        help="Optional paper title to use with --pdf (otherwise inferred from the PDF)"
     )
     return parser.parse_args(argv)
 
