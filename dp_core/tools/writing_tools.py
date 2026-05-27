@@ -10,6 +10,15 @@ from .base import Tool, ToolParameter, ToolResult, register_tool
 from ..config import config
 
 
+def _format_tag_line(tags) -> str:
+    """Render tags with exactly one leading '#' each (the model sometimes
+    already prefixes them, which previously produced '##')."""
+    return ", ".join(
+        "#" + str(t).lstrip("#").strip()
+        for t in (tags or []) if str(t).strip()
+    )
+
+
 @register_tool
 class WriteBlogTool(Tool):
     """Blog article writing tool - Supports two-stage writing (draft + polishing)"""
@@ -413,7 +422,7 @@ class WriteXiaohongshuTool(Tool):
 {result.get("content", "")}
 
 ---
-标签: {", ".join("#" + tag for tag in result.get("tags", []))}
+标签: {_format_tag_line(result.get("tags", []))}
 """
                 with open(output_path, 'w', encoding='utf-8') as f:
                     f.write(md_content)
