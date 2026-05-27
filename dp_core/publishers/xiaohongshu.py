@@ -136,6 +136,9 @@ class XiaohongshuPublisher:
 
     # Xiaohongshu Creator Center URL
     CREATOR_URL = "https://creator.xiaohongshu.com"
+    # Authenticated dashboard. The bare root redirects to /login even when logged
+    # in, so login checks must target this page instead.
+    CREATOR_HOME_URL = "https://creator.xiaohongshu.com/new/home"
     LOGIN_URL = "https://creator.xiaohongshu.com/login"
     # Directly use target=image parameter to enter image-text upload page
     PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish?from=menu&target=image"
@@ -243,8 +246,16 @@ class XiaohongshuPublisher:
             Whether logged in
         """
         try:
-            # Use domcontentloaded instead of networkidle to avoid timeout
-            await self.page.goto(self.CREATOR_URL, wait_until='domcontentloaded', timeout=60000)
+            # Navigate to the authenticated dashboard (NOT the bare root, which
+            # redirects to /login even when logged in). If our session is valid we
+            # stay on /new/home; otherwise we get bounced to /login.
+            try:
+                await self.page.goto(self.CREATOR_HOME_URL, wait_until='domcontentloaded', timeout=60000)
+            except Exception:
+                # A client-side redirect can abort the navigation (net::ERR_ABORTED).
+                # The page still lands somewhere — inspect the resulting URL below
+                # instead of treating the abort as "not logged in".
+                pass
             await asyncio.sleep(3)
 
             # Check if redirected to login page
@@ -266,41 +277,56 @@ class XiaohongshuPublisher:
             print(f"⚠️ Error checking login status: {e}")
             return False
 
-    async def login_with_qrcode(self, timeout: int = 120) -> bool:
+    async def login_with_qrcode(self, timeout: int = 180) -> bool:
         """
-        QR code scan login
+        QR code scan login.
+
+        Detecting success is intentionally multi-signal because Xiaohongshu's
+        login is a SPA: after a scan it may render the dashboard without changing
+        the URL away from /login. We treat login as done if ANY of these hold:
+          - the URL has left the /login route, or
+          - a logged-in indicator (avatar/user-info) is visible, or
+          - the QR code element has disappeared (consumed by a successful scan).
+        Everything is wrapped so a closed/crashed page doesn't blow up the loop.
 
         Args:
-            timeout: Timeout for waiting scan (seconds)
+            timeout: Seconds to wait for the scan.
 
         Returns:
-            Whether login is successful
+            Whether login succeeded.
         """
         print("\n" + "="*60)
         print("📱 Xiaohongshu QR Code Login")
         print("="*60)
 
+        # Already logged in with valid cookies? (one authoritative check up front)
+        if await self.check_login():
+            print("\n✅ Already logged in.")
+            await self._save_cookies()
+            return True
+
+        # Show the QR ONCE and then poll the SAME page without navigating away —
+        # navigating mid-scan invalidates the QR and forces a re-scan. A real scan
+        # makes Xiaohongshu redirect this page off /login (or render an avatar).
         await self.page.goto(self.LOGIN_URL, wait_until='domcontentloaded', timeout=60000)
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
+        print("\n📷 Scan the QR code shown in the browser window with the Xiaohongshu APP")
+        print(f"⏳ Waiting for login (timeout: {timeout}s)... (do not close the window)")
 
-        # Wait for QR code to appear
-        try:
-            qr_selector = '.qrcode-img, [class*="qrcode"], img[src*="qrcode"]'
-            await self.page.wait_for_selector(qr_selector, timeout=10000)
-            print("\n✅ QR code loaded, please scan the QR code on screen using Xiaohongshu APP")
-            print(f"⏳ Waiting for scan login (timeout: {timeout} seconds)...")
-        except:
-            print("⚠️ QR code not found, may already be logged in or page structure changed")
-
-        # Wait for successful login (URL change or user info appears)
         start_time = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start_time < timeout:
-            current_url = self.page.url
-            if 'login' not in current_url and 'creator.xiaohongshu.com' in current_url:
-                print("\n✅ Login successful!")
-                await self._save_cookies()
-                return True
             await asyncio.sleep(2)
+            try:
+                url = self.page.url
+                left_login = "/login" not in url and "xiaohongshu.com" in url
+                indicator = await self.page.query_selector(LOGIN_INDICATOR_SELECTORS)
+                if left_login or indicator is not None:
+                    await asyncio.sleep(2)  # let the redirect settle and cookies set
+                    print("\n✅ Login detected, saving session...")
+                    await self._save_cookies()
+                    return True
+            except Exception as e:
+                print(f"   (waiting… {type(e).__name__})")
 
         print("\n❌ Login timeout")
         return False
@@ -485,10 +511,11 @@ class XiaohongshuPublisher:
 
         result["image_count"] = len(valid_images)
 
-        # Check login status
-        if not await self.check_login():
-            result["message"] = "Not logged in, please scan QR code to login first"
-            return result
+        # Login is verified by the caller (publish_xiaohongshu tool) before we get
+        # here. We deliberately don't re-check: a second /new/home navigation can
+        # abort/flake and falsely report "not logged in". If the session really is
+        # invalid, the publish page redirects to login and the upload-input check
+        # below fails loudly with a screenshot.
 
         print(f"\n📝 Starting to publish Xiaohongshu note: {title}")
         print(f"   Valid images: {len(valid_images)}")

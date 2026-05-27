@@ -248,13 +248,13 @@ class LoginXiaohongshuTool(Tool):
             ToolParameter(
                 name="timeout",
                 type="integer",
-                description="等待扫码的超时时间（秒），默认 120",
+                description="等待扫码的超时时间（秒），默认 180",
                 required=False,
-                default=120
+                default=180
             )
         ]
 
-    async def execute(self, timeout: int = 120, **kwargs) -> ToolResult:
+    async def execute(self, timeout: int = 180, **kwargs) -> ToolResult:
         try:
             from ..publishers.xiaohongshu import XiaohongshuPublisher
 
