@@ -37,37 +37,32 @@ research:
 # API Configuration
 # ============================================================
 api:
-  # LLM provider: siliconflow (default) or openrouter
+  # LLM provider — any OpenAI-compatible supplier. Set the matching API key in .env.
+  # Chinese suppliers:
+  #   siliconflow  硅基流动        -> SILICONFLOW_API_KEY
+  #   deepseek     DeepSeek 深度求索 -> DEEPSEEK_API_KEY
+  #   dashscope    阿里云百炼/通义   -> DASHSCOPE_API_KEY
+  #   moonshot     月之暗面 Kimi     -> MOONSHOT_API_KEY
+  #   zhipu        智谱 GLM          -> ZHIPU_API_KEY
+  #   ark          火山方舟/豆包     -> ARK_API_KEY
+  #   hunyuan      腾讯混元          -> HUNYUAN_API_KEY
+  # International:
+  #   openrouter   OpenRouter        -> OPENROUTER_API_KEY
+  #   custom       any OpenAI-compatible endpoint -> CUSTOM_API_KEY (set api.custom.base_url below)
+  # NOTE: switching provider also means setting a model name that provider serves
+  # (see llm.text.model / llm.vision.model below).
   provider: "siliconflow"
 
-  siliconflow:
-    timeout: 120           # API timeout
-    max_retries: 3
-    base_url: "https://api.siliconflow.cn/v1"
+  # Optional global defaults (per-provider overrides take precedence)
+  default_timeout: 120
+  default_max_retries: 3
 
-  siliconflow_ocr:
-    timeout: 60           # OCR API timeout
-    max_retries: 3
-    base_url: "https://api.siliconflow.cn/v1"
-
-  openrouter:
-    timeout: 120          # API timeout
-    max_retries: 3
-    base_url: "https://openrouter.ai/api/v1"
-
-  arxiv:
-    timeout: 30           # arXiv API timeout
-    max_retries: 3
-    rate_limit_delay: 1.1 # Request interval (seconds), API etiquette
-
-  semantic_scholar:
-    timeout: 20           # S2 API timeout
-    max_retries: 3
-    rate_limit_delay: 1.1
-
-  xiaohongshu_mcp:
-    timeout: 10           # Xiaohongshu MCP service timeout
-    max_retries: 3
+  # Per-provider overrides are optional; base URLs are built in. Examples:
+  # siliconflow:
+  #   timeout: 120
+  #   base_url: "https://api.siliconflow.cn/v1"
+  # custom:
+  #   base_url: "https://your-endpoint.example.com/v1"
 
 # ============================================================
 # LLM Parameters (SiliconFlow - DeepSeek models)
@@ -82,59 +77,34 @@ llm:
   # Vision-language model (image analysis/optimization)
   vision:
     model: "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    temperature: 0.7
-    max_tokens: 4000
-
-  # OCR model for PDF conversion
-  ocr:
-    model: "deepseek-ai/DeepSeek-OCR"
 
 # ============================================================
 # Paper Search Parameters
 # ============================================================
 search:
-  max_results: 100        # Maximum results per data source
-  issues_result: 15       # Number of papers to show in GitHub Issue
-  recent_days: 3          # Search papers from past N days (0=no limit)
-  recent_years: 0         # Search papers from past N years (0=no limit, S2 only)
-  min_citations: 0        # Minimum citation count (0=no limit, S2 only)
-  page_size: 100          # S2 API pagination size
-
-# ============================================================
-# Batch Processing Parameters
-# ============================================================
-batch:
-  paper_selection_batch_size: 20   # Papers per batch for scoring
-  paper_selection_top_k: 20        # Papers to keep in stage 1
-  cli_timeout: 600                 # CLI tool timeout (10 minutes)
-  publish_timeout: 1200            # Publishing timeout (20 minutes)
-  browser_agent_max_steps: 800     # Browser Use Agent max steps
-  browser_agent_max_failures: 10   # Agent max failure tolerance
+  max_results: 50         # Default max results per search (when not overridden)
+  min_citations: 0        # Minimum citation count (0=no limit, Semantic Scholar only)
 
 # ============================================================
 # Publishing Parameters
 # ============================================================
 publish:
   xiaohongshu:
+    # ⚠️ Automated publishing to Xiaohongshu likely violates its Terms of Service
+    # and may get your account banned. You must explicitly opt in by setting this to
+    # true. When false (default), the pipeline stops after generating the draft.
+    enabled: false                 # Master switch for automated publishing (opt-in)
     save_as_draft: false           # Save as draft (true=draft, false=publish directly)
     visibility: private            # Visibility: public=public, private=only me
     max_content_len: 1000          # Content length limit (Xiaohongshu UI shows 1000 chars)
 
 # ============================================================
-# OCR Parameters (SiliconFlow)
-# ============================================================
-ocr:
-  dpi: 180                # DPI for PDF to image conversion
-  max_tokens: 6000        # Maximum OCR token count
-  mode: "markdown"        # OCR mode: general/markdown/table
-
-# ============================================================
-# Figure/Table Extraction Parameters
+# Figure/Table Extraction (pdffigures2)
 # ============================================================
 extraction:
-  min_score: 0.7          # Minimum confidence score
-  dpi: 300                # DPI for extracted images
-  model_dir: ""           # Optional: local PubLayNet model directory (contains config.yml + model_final.pth). If empty, auto-download to ~/.xhs-paper-engine/publaynet
+  dpi: 200                # Render DPI for extracted figure/table images
+  pdffigures2_jar: ""     # Optional path override. If empty, uses env PDFFIGURES2_JAR
+                          # or the default ~/.xhs-paper-engine/pdffigures2.jar
 
 # ============================================================
 # Retry Mechanism Parameters

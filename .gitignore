@@ -98,3 +98,6 @@ coverage.xml
 # Generated files
 # ==========================================
 logs/run_history.json
+
+# Local figure-extraction comparison artifacts
+pdftest/

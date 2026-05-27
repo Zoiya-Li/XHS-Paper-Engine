@@ -4,14 +4,14 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${VENV_DIR:-$PROJECT_DIR/.venv}"
 
-WITH_DETECTRON2=0
+WITH_JAVA=0
 WITH_POPPLER=0
 
 for arg in "$@"; do
   case "$arg" in
-    --with-detectron2) WITH_DETECTRON2=1 ;;
+    --with-java) WITH_JAVA=1 ;;
     --with-poppler) WITH_POPPLER=1 ;;
-    --all) WITH_DETECTRON2=1; WITH_POPPLER=1 ;;
+    --all) WITH_JAVA=1; WITH_POPPLER=1 ;;
   esac
 done
 
@@ -46,22 +46,18 @@ if [ "$WITH_POPPLER" -eq 1 ]; then
   fi
 fi
 
-if [ "$WITH_DETECTRON2" -eq 1 ]; then
-  if [ ! -d "$PROJECT_DIR/detectron2" ]; then
-    git clone https://github.com/facebookresearch/detectron2.git "$PROJECT_DIR/detectron2"
-  fi
-
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    ARCH="$(uname -m)"
-    if [ "$ARCH" = "arm64" ]; then
-      ARCHFLAGS="-arch arm64"
-    else
-      ARCHFLAGS="-arch x86_64"
-    fi
-    CC=clang CXX=clang++ ARCHFLAGS="$ARCHFLAGS" python -m pip install -e "$PROJECT_DIR/detectron2"
+if [ "$WITH_JAVA" -eq 1 ]; then
+  # Figure extraction (pdffigures2) needs a Java runtime.
+  if command -v brew >/dev/null 2>&1; then
+    brew install openjdk
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y default-jre
   else
-    python -m pip install -e "$PROJECT_DIR/detectron2"
+    echo "==> Please install a Java runtime (JRE 11+) manually."
   fi
+  echo "==> NOTE: also place the pdffigures2 fat JAR at ~/.xhs-paper-engine/pdffigures2.jar"
+  echo "==>       (build it via scripts/build_pdffigures2_jar.sh, or see the README)."
 fi
 
 echo "==> Done."

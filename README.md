@@ -7,6 +7,17 @@
 
 XHS Paper Engine is an intelligent academic paper recommendation and publishing system that automatically searches, filters, downloads the latest papers, and generates content suitable for social media publishing.
 
+> ## ⚠️ Disclaimer — Read Before Use
+>
+> This project is provided **for learning and research purposes only**. Use it at your own risk.
+>
+> - The Xiaohongshu (Little Red Book) publishing feature uses **browser automation** to operate the creator backend. This **bypasses the official API and very likely violates Xiaohongshu's Terms of Service**, and **may result in your account being restricted or banned**.
+> - Automated publishing is **disabled by default**. You must explicitly opt in via `publish.xiaohongshu.enabled: true` in `config.yaml`. Without it, the pipeline stops after generating a local draft.
+> - This tool generates content with LLMs. **You are responsible** for reviewing accuracy, respecting the cited papers' licenses, and complying with the platform's content rules. Do not use it to mass-produce low-quality or misleading content.
+> - The authors accept **no liability** for account bans, data loss, or any other consequences of using this software.
+>
+> See [Ethical Use](#ethical-use) and [Security & Privacy](#security--privacy) below.
+
 ## Features
 
 - **Intelligent Paper Search**: Supports multiple academic data sources including arXiv and Semantic Scholar (optional)
@@ -16,7 +27,8 @@ XHS Paper Engine is an intelligent academic paper recommendation and publishing 
 - **Content Generation**: Automatically generates content for Xiaohongshu (Little Red Book) posts
 - **Auto Publishing**: Supports publishing to Xiaohongshu
 - **Configurable**: Flexibly adjust various parameters through YAML configuration file
-- **Provider Optionality**: Supports SiliconFlow or OpenRouter for text models, with OCR fallback to `pdftotext` when using OpenRouter
+- **Provider Optionality**: Supports SiliconFlow or OpenRouter for text models
+- **PDF text extraction**: Reads the PDF text layer with PyMuPDF (fast, free; works for arXiv-style born-digital PDFs), falling back to `pdftotext` for scanned PDFs
 
 ## Architecture
 
@@ -45,80 +57,61 @@ XHS Paper Engine
 
 ### 1. Install Dependencies
 
-**Using uv (recommended, one-shot):**
-
-macOS/Linux:
-```bash
-./scripts/setup_env_uv.sh --all
-```
-
-Windows (PowerShell):
-```powershell
-# If scripts are blocked:
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\setup_env_uv.ps1 --all
-```
-
-**Windows (PowerShell) one-shot setup (pip):**
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\setup_env.ps1 --all
-```
+> **Figure extraction is required.** An image-heavy Xiaohongshu post needs real
+> figures, so the project **refuses to start** if the figure-extraction backend
+> is missing — there is no page-screenshot fallback. If a given paper yields no
+> extractable figures, the agent simply picks a different paper.
+>
+> Figures are extracted by [pdffigures2](https://github.com/allenai/pdffigures2),
+> which runs as a self-contained **Java JAR** — no Python ML stack, no GPU, no
+> model download. You need a **Java runtime** + the **pdffigures2 JAR**.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/xhs-paper-engine.git
-cd xhs-paper-engine
+git clone https://github.com/Zoiya-Li/XHS-Paper-Engine.git
+cd XHS-Paper-Engine
 
-# One-shot setup (macOS/Linux)
-./scripts/setup_env.sh --all
-
-# Create virtual environment (recommended)
+# Create a virtual environment (recommended)
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install Python dependencies (lightweight — no torch/detectron2)
 pip install -r requirements.txt
+# or, as a package:  pip install .
 
-# Install Playwright browser
+# Install the Playwright browser (needed for publishing)
 playwright install chromium
-
-# Install detectron2 (required for figure/table extraction)
-# macOS (source install):
-#   git clone https://github.com/facebookresearch/detectron2.git
-#   # If GitHub is blocked, use Gitee mirror:
-#   # git clone https://gitee.com/facebookresearch/detectron2.git
-#   cd detectron2
-#   # Intel Mac:
-#   CC=clang CXX=clang++ ARCHFLAGS="-arch x86_64" python -m pip install -e .
-#   # Apple Silicon (M1/M2/M3):
-#   CC=clang CXX=clang++ ARCHFLAGS="-arch arm64" python -m pip install -e .
-#   cd ..
-#
-# Notes:
-# - detectron2 must be compiled against your current PyTorch.
-# - You may need: ninja, fvcore, iopath.
-# - PubLayNet weights will be downloaded automatically by layoutparser.
-#   To use a local model, set `extraction.model_dir` in config.yaml
-#   or export `PUBLAYNET_MODEL_DIR=/path/to/model_dir` (must contain config.yml + model_final.pth).
-#
-# Windows:
-# - detectron2 source install is not automated here. Use WSL2 or follow detectron2's official Windows guide.
-
-**Important**: detectron2 is mandatory if you want real figure/table extraction (not just page screenshots). Please install it as above.
-
-The first time you run figure extraction, the PubLayNet model files (~800MB) will be downloaded automatically to `~/.xhs-paper-engine/publaynet` if you haven't provided a local model directory.
-
-# Optional: OCR fallback (used when api.provider=openrouter or no SiliconFlow key)
-# macOS:
-brew install poppler
-# Linux:
-#   sudo apt-get install -y poppler-utils
-# Windows:
-#   choco install poppler
-#   # or: scoop install poppler
 ```
+
+**Install the figure-extraction backend (required): Java + the pdffigures2 JAR**
+
+```bash
+# 1) A Java runtime (JRE 11+)
+# macOS:   brew install openjdk
+# Linux:   sudo apt-get install -y default-jre
+# Windows: choco install temurin   (or install Adoptium Temurin)
+
+# 2) The pdffigures2 fat JAR -> ~/.xhs-paper-engine/pdffigures2.jar
+#    Option A: build it (requires Docker; one-off, ~a few minutes)
+./scripts/build_pdffigures2_jar.sh
+#    Option B: download a prebuilt JAR from the project releases and drop it at
+#              ~/.xhs-paper-engine/pdffigures2.jar
+```
+
+The JAR location is resolved from `PDFFIGURES2_JAR`, then `extraction.pdffigures2_jar`
+in `config.yaml`, then the default `~/.xhs-paper-engine/pdffigures2.jar`.
+
+Optional **PDF text fallback** (poppler's `pdftotext`, used only for PDFs without a text layer, e.g. scans):
+
+```bash
+# macOS
+brew install poppler
+# Linux:   sudo apt-get install -y poppler-utils
+# Windows: choco install poppler   (or: scoop install poppler)
+```
+
+> Verify everything is ready with `python auto_run.py --dry-run` — it checks the
+> API key, Java, and the JAR, and refuses to run if the figure backend is missing.
 
 ### 2. Configure Environment Variables
 
@@ -131,7 +124,7 @@ cp .env.example .env
 Edit `.env` file:
 
 ```bash
-# Required: SiliconFlow API Key (default text + OCR)
+# Required: SiliconFlow API Key (default text + vision model)
 SILICONFLOW_API_KEY=sk-your-api-key-here
 
 # Optional: OpenRouter (set api.provider=openrouter in config.yaml)
@@ -185,30 +178,55 @@ llm:
   # Vision model (image analysis/optimization)
   vision:
     model: "Qwen/Qwen3-VL-235B-A22B-Instruct"
-  # OCR model (SiliconFlow only)
-  ocr:
-    model: "deepseek-ai/DeepSeek-OCR"
 ```
 
 Notes:
 - **text**: used for all text-only tasks (paper selection, writing, polishing)
 - **vision**: used for image understanding/selection
-- **ocr**: only used with SiliconFlow; if `api.provider=openrouter` or no SiliconFlow key, OCR falls back to `pdftotext`
+
+PDF→text conversion uses PyMuPDF's text layer (no model/API needed) and only falls back to `pdftotext` for scanned PDFs — there is no LLM-based OCR step.
 
 ### Optional data sources
 
 - **Semantic Scholar**: requires `S2_API_KEY`
 
-### LLM Provider (SiliconFlow / OpenRouter)
+### LLM Provider
+
+Any OpenAI-compatible provider is supported — set `api.provider` in `config.yaml`
+and the matching key in `.env`. You only need **one** provider configured.
+
+| `api.provider` | Provider | API key env var | Example model (`llm.text.model`) |
+|----------------|----------|-----------------|----------------------------------|
+| `siliconflow` (default) | 硅基流动 SiliconFlow (CN) | `SILICONFLOW_API_KEY` | `deepseek-ai/DeepSeek-V3` |
+| `deepseek` | DeepSeek 深度求索 (CN) | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `dashscope` | 阿里云百炼 / 通义千问 (CN) | `DASHSCOPE_API_KEY` | `qwen-plus` |
+| `moonshot` | 月之暗面 Kimi (CN) | `MOONSHOT_API_KEY` | `moonshot-v1-32k` |
+| `zhipu` | 智谱 GLM (CN) | `ZHIPU_API_KEY` | `glm-4-plus` |
+| `ark` | 火山方舟 / 豆包 Doubao (CN) | `ARK_API_KEY` | `doubao-pro-32k` |
+| `hunyuan` | 腾讯混元 (CN) | `HUNYUAN_API_KEY` | `hunyuan-standard` |
+| `openrouter` | OpenRouter (international) | `OPENROUTER_API_KEY` | `deepseek/deepseek-chat` |
+| `custom` | any OpenAI-compatible endpoint | `CUSTOM_API_KEY` | (your model) |
 
 ```yaml
 api:
-  provider: "siliconflow"   # or "openrouter"
-  openrouter:
-    base_url: "https://openrouter.ai/api/v1"
+  provider: "deepseek"          # pick one from the table above
+llm:
+  text:
+    model: "deepseek-chat"      # must be a model that provider serves
+  vision:
+    model: "..."                # set a vision model the provider serves, if you use image analysis
 ```
 
-**OCR fallback**: if `api.provider=openrouter` or no `SILICONFLOW_API_KEY` is set, PDF OCR falls back to Poppler `pdftotext` (install via `brew install poppler` on macOS).
+For a self-hosted or otherwise unlisted endpoint, use `custom` and set its URL:
+
+```yaml
+api:
+  provider: "custom"
+  custom:
+    base_url: "https://your-endpoint.example.com/v1"
+```
+
+> Note: switching provider means switching the **model names** too — each provider serves different model ids. Vision support also varies (e.g. DeepSeek's API has no vision model); set `llm.vision.model` to something the provider serves, or the image-analysis step will error.
 
 ## Permissions & Login
 
@@ -240,18 +258,13 @@ XHS Paper Engine provides the following Agent tools:
 | `select_best_paper` | Select the best paper |
 | `download_paper` | Download paper PDF |
 | `extract_figures` | Extract images from papers |
-| `capture_pdf_pages` | Screenshot PDF pages if extraction fails |
 | `convert_pdf_to_markdown` | Convert PDF to Markdown |
-| `select_best_images` | Select best images for publishing |
-| `analyze_images` | Analyze image metadata |
 | `analyze_images_with_vision` | Analyze image content with vision model |
 | `write_blog` | Generate blog article |
 | `write_xiaohongshu` | Generate Xiaohongshu post |
 | `login_xiaohongshu` | Trigger QR login for Xiaohongshu |
 | `publish_xiaohongshu` | Publish to Xiaohongshu |
 | `record_publish` | Record publish history |
-| `get_analytics` | Get runtime statistics |
-| `get_publish_recommendation` | Get publish recommendations |
 | `get_publish_history` | Get publish history |
 
 ## Scheduled Tasks Setup
@@ -259,10 +272,16 @@ XHS Paper Engine provides the following Agent tools:
 ### macOS (launchd)
 
 ```bash
-./setup_schedule.sh
+./setup_schedule.sh install     # Install scheduled tasks (daily at 06:00 and 18:00)
+./setup_schedule.sh status      # Show task status and recent run history
+./setup_schedule.sh test        # Validate environment without running (dry-run)
+./setup_schedule.sh run         # Run once immediately
+./setup_schedule.sh uninstall   # Remove scheduled tasks
 ```
 
-This script renders the `launchd/*.plist` templates with your current project path and home directory.
+`install` renders the `launchd/*.plist` templates with your current project path
+and home directory, then loads them. Override the Python interpreter with the
+`XHS_PAPER_ENGINE_PYTHON` environment variable if needed.
 
 ### Linux (crontab)
 
@@ -308,24 +327,57 @@ schtasks /Create /TN "XHSPaperEngine" /TR "\"C:\Path\To\python.exe\" \"C:\Path\T
 Example:
 
 ```python
+from typing import List
 from .base import Tool, ToolParameter, ToolResult, register_tool
 
-@register_tool(
-    name="my_tool",
-    description="My tool description",
-    parameters=[
-        ToolParameter("param1", str, "Parameter 1 description", required=True),
-    ]
-)
+@register_tool
 class MyTool(Tool):
+    @property
+    def name(self) -> str:
+        return "my_tool"
+
+    @property
+    def description(self) -> str:
+        return "My tool description"
+
+    @property
+    def parameters(self) -> List[ToolParameter]:
+        return [
+            ToolParameter("param1", "string", "Parameter 1 description", required=True),
+        ]
+
     async def execute(self, **kwargs) -> ToolResult:
         # Implement your logic
-        return ToolResult.success(data={"result": "..."})
+        return ToolResult(success=True, data={"result": "..."})
 ```
+
+Note: `@register_tool` is a plain decorator (no arguments) — it instantiates and
+registers the class on the global registry. `name`, `description`, and
+`parameters` are properties, and `ToolParameter.type` is a string such as
+`"string"`, `"integer"`, `"boolean"`, or `"array"`.
+
+## Ethical Use
+
+This pipeline can generate and publish content at scale. Please use it responsibly:
+
+- **Review before publishing.** LLM-generated summaries can contain errors or misrepresent a paper. Always read the draft yourself.
+- **Don't spam.** Mass-posting auto-generated content degrades the platform and misleads readers. Prefer drafts/private visibility and a human in the loop.
+- **Respect sources.** Cite papers accurately, honor their licenses, and don't republish figures where licensing forbids it.
+- **Be transparent.** Consider disclosing that content is AI-assisted.
+
+Automated publishing is opt-in (`publish.xiaohongshu.enabled`) precisely so that running the pipeline never posts to a live account by accident.
+
+## Security & Privacy
+
+- **Login cookies** are stored **in plaintext** under `~/.xhs-paper-engine/xiaohongshu_cookies.json`. These are equivalent to your account credentials — protect this directory, do not commit it, and revoke the session if your machine is shared or compromised.
+- **API keys** are read from `.env` (git-ignored). Never commit real keys.
+- **Third-party data flow.** Paper text (sent to the LLM) and extracted figures (sent to the vision model) go to external services (SiliconFlow/OpenRouter). Do **not** run this on confidential or unpublished papers you are not allowed to share.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Provided "as is", without warranty of any kind. See the [Disclaimer](#️-disclaimer--read-before-use) above.
 
 ## Contributing
 

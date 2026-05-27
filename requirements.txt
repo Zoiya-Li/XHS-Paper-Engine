@@ -1,9 +1,12 @@
-# XHS Paper Engine Dependencies
+# XHS Paper Engine — Python Dependencies
 # Python 3.9+
-
-# ============================================================
-# Core Dependencies
-# ============================================================
+#
+# Covers the full pipeline: search → dedup → select → download → PDF→text →
+# figure extraction → write → vision optimization → publish.
+#
+# Figure/table extraction is done by pdffigures2, which runs as a self-contained
+# Java JAR (no Python ML stack). It needs a Java runtime + the pdffigures2 JAR —
+# see the README. The app refuses to start if those are missing.
 
 # HTTP requests
 requests>=2.31.0
@@ -13,23 +16,11 @@ aiohttp>=3.9.0
 pyyaml>=6.0.0
 python-dotenv>=1.0.0
 
-# PDF processing
+# PDF processing (text extraction, page rendering)
 pymupdf>=1.23.0
 
-# Image processing (figure/table extraction, vision tools)
-opencv-python>=4.8.0
+# Image processing (vision tools, image handling)
 Pillow>=10.0.0
-numpy>=1.24.0
-
-# Document layout analysis (figure/table extraction)
-layoutparser>=0.3.4
-
-# Deep learning stack (required for detectron2)
-torch>=2.0.0
-torchvision>=0.15.0
-fvcore>=0.1.5
-iopath>=0.1.9
-yacs>=0.1.8
 
 # Browser automation
 playwright>=1.40.0
@@ -39,21 +30,3 @@ markdown>=3.5.0
 
 # Timezone handling
 pytz>=2023.3
-
-# Optional: detectron2 (source install required on macOS; see README)
-# detectron2>=0.6
-
-# ============================================================
-# Development Dependencies (optional)
-# ============================================================
-
-# Code formatting
-# black>=23.0.0
-# isort>=5.12.0
-
-# Type checking
-# mypy>=1.7.0
-
-# Testing
-# pytest>=7.4.0
-# pytest-asyncio>=0.21.0

@@ -5,11 +5,11 @@ $VenvDir = $env:VENV_DIR
 if (-not $VenvDir) { $VenvDir = Join-Path $ProjectDir ".venv" }
 
 $WithPoppler = $false
-$WithDetectron2 = $false
+$WithJava = $false
 foreach ($arg in $args) {
   if ($arg -eq "--with-poppler") { $WithPoppler = $true }
-  if ($arg -eq "--with-detectron2") { $WithDetectron2 = $true }
-  if ($arg -eq "--all") { $WithPoppler = $true; $WithDetectron2 = $true }
+  if ($arg -eq "--with-java") { $WithJava = $true }
+  if ($arg -eq "--all") { $WithPoppler = $true; $WithJava = $true }
 }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -45,9 +45,15 @@ if ($WithPoppler) {
   }
 }
 
-if ($WithDetectron2) {
-  Write-Host "==> detectron2 source install is not automated on Windows."
-  Write-Host "==> Recommendation: use WSL2 or follow the official detectron2 Windows guide."
+if ($WithJava) {
+  # Figure extraction (pdffigures2) needs a Java runtime.
+  if (Get-Command choco -ErrorAction SilentlyContinue) {
+    choco install temurin -y
+  } else {
+    Write-Host "==> Please install a Java runtime (JRE 11+) manually (e.g. Adoptium Temurin)."
+  }
+  Write-Host "==> NOTE: also place the pdffigures2 fat JAR at ~/.xhs-paper-engine/pdffigures2.jar"
+  Write-Host "==>       (build it via scripts/build_pdffigures2_jar.sh, or see the README)."
 }
 
 Write-Host "==> Done."

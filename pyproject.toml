@@ -32,9 +32,12 @@ dependencies = [
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
     "pymupdf>=1.23.0",
+    "Pillow>=10.0.0",
     "playwright>=1.40.0",
     "markdown>=3.5.0",
     "pytz>=2023.3",
+    # Figure/table extraction runs as an external Java JAR (pdffigures2), so it
+    # needs no Python deps here — only a JRE + the JAR at runtime (see README).
 ]
 
 [project.optional-dependencies]
@@ -47,8 +50,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/xhs-paper-engine"
-Issues = "https://github.com/yourusername/xhs-paper-engine/issues"
+Homepage = "https://github.com/Zoiya-Li/XHS-Paper-Engine"
+Issues = "https://github.com/Zoiya-Li/XHS-Paper-Engine/issues"
 
 [project.scripts]
 xhs-paper-engine = "auto_run:run"
