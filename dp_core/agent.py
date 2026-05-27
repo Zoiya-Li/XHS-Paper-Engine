@@ -319,9 +319,10 @@ Output directories (this session):
             action_args.setdefault("output_dir", str(self.papers_dir))
 
         # Extract figures -> session dir (the tool creates figures/ and tables/
-        # subdirs inside it, i.e. session_dir/figures and session_dir/tables).
+        # subdirs inside it). Force it (not setdefault): the model otherwise passes
+        # the figures_dir it sees in the prompt, producing figures/figures nesting.
         if action_name == "extract_figures":
-            action_args.setdefault("output_dir", str(self.session_dir))
+            action_args["output_dir"] = str(self.session_dir)
 
         # PDF to Markdown -> markdown directory
         if action_name == "convert_pdf_to_markdown" and "output_path" not in action_args:
