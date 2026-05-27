@@ -12,8 +12,7 @@ Configuration:
 - Xiaohongshu: First-time use requires QR code scan login, cookies will be automatically saved
 """
 
-import os
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pathlib import Path
 
 from .base import Tool, ToolParameter, ToolResult, register_tool

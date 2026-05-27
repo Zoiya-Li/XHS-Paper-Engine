@@ -10,9 +10,6 @@ import os
 import json
 import time
 import re
-import asyncio
-import subprocess
-import shutil
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -658,7 +655,6 @@ class DownloadPaperTool(Tool):
             response = session.get(url, timeout=180, stream=True)
             response.raise_for_status()
 
-            total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
 
             with open(pdf_path, 'wb') as f:
@@ -1226,8 +1222,6 @@ class ListFilesTool(Tool):
         **kwargs
     ) -> ToolResult:
         try:
-            import glob
-
             dir_path = Path(path)
 
             if not dir_path.exists():

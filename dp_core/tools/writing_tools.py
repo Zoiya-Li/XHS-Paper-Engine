@@ -3,7 +3,7 @@ Writing Tools - Writing-related tools
 """
 
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pathlib import Path
 
 from .base import Tool, ToolParameter, ToolResult, register_tool

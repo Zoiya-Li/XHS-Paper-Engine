@@ -15,7 +15,6 @@ playwright install chromium
 Reference implementation: xiaohongshu-mcp (https://github.com/9cxndy/xiaohongshu-mcp)
 """
 
-import os
 import json
 import asyncio
 import requests
@@ -668,7 +667,7 @@ class XiaohongshuPublisher:
                                 clicked_selector = selector
                                 print(f"   ✅ Clicked draft button: {selector}")
                                 break
-                    except Exception as e:
+                    except Exception:
                         continue
 
                 if draft_clicked:
