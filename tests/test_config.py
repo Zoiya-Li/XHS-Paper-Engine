@@ -22,7 +22,8 @@ def test_deep_merge_overrides_only_given_leaves():
     assert base == {"a": {"x": 1, "y": 20}, "b": 3}
 
 
-def test_publish_enabled_defaults_to_false_optin():
-    # Automated publishing must be opt-in.
+def test_publish_enabled_default_on_but_private():
+    # Publishing is on by default, but visibility is private (only-self) as a safety net.
     cfg = Config()
-    assert cfg.get("publish.xiaohongshu.enabled") is False
+    assert cfg.get("publish.xiaohongshu.enabled") is True
+    assert cfg.get("publish.xiaohongshu.visibility") == "private"

@@ -88,10 +88,11 @@ search:
 # ============================================================
 publish:
   xiaohongshu:
-    # ⚠️ Automated publishing to Xiaohongshu likely violates its Terms of Service
-    # and may get your account banned. You must explicitly opt in by setting this to
-    # true. When false (default), the pipeline stops after generating the draft.
-    enabled: false                 # Master switch for automated publishing (opt-in)
+    # ⚠️ Automated publishing uses browser automation and likely violates
+    # Xiaohongshu's Terms of Service (risk of account restriction). It is ON by
+    # default (this is a publishing tool); set false to stop after the draft.
+    # Posts default to private (only-self) visibility below as a safety net.
+    enabled: true                  # Master switch for automated publishing
     save_as_draft: false           # Save as draft (true=draft, false=publish directly)
     visibility: private            # Visibility: public=public, private=only me
     max_content_len: 1000          # Content length limit (Xiaohongshu UI shows 1000 chars)

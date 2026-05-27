@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     },
     "publish": {
         "xiaohongshu": {
-            "enabled": False,  # Opt-in master switch for automated publishing
+            "enabled": True,  # Automated publishing on by default (set false to disable)
             "save_as_draft": False,
             "visibility": "private",  # public=publicly visible, private=only visible to self
             "max_content_len": 1000
