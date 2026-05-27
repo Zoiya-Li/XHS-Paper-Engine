@@ -27,69 +27,123 @@ from .retry import call_api_with_retry
 from .config import config
 
 
+# ---------------------------------------------------------------------------
+# Supported LLM providers.
+#
+# Every provider below exposes an OpenAI-compatible /chat/completions endpoint,
+# so adding a new one is just another row here (base_url + api_key_env). Most are
+# Chinese suppliers. Per-provider overrides (base_url / timeout / max_retries)
+# can still be set in config.yaml under api.<provider>.*; "custom" lets you point
+# at any other OpenAI-compatible endpoint via api.custom.base_url + CUSTOM_API_KEY.
+# ---------------------------------------------------------------------------
+PROVIDERS: Dict[str, Dict[str, str]] = {
+    "siliconflow": {
+        "base_url": "https://api.siliconflow.cn/v1",
+        "api_key_env": "SILICONFLOW_API_KEY",
+        "label": "硅基流动 SiliconFlow (CN)",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "label": "DeepSeek 深度求索 (CN)",
+    },
+    "dashscope": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "label": "阿里云百炼 / 通义千问 DashScope (CN)",
+    },
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "api_key_env": "MOONSHOT_API_KEY",
+        "label": "月之暗面 Moonshot / Kimi (CN)",
+    },
+    "zhipu": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "api_key_env": "ZHIPU_API_KEY",
+        "label": "智谱 AI / GLM (CN)",
+    },
+    "ark": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "api_key_env": "ARK_API_KEY",
+        "label": "火山方舟 Volcengine Ark / 豆包 Doubao (CN)",
+    },
+    "hunyuan": {
+        "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
+        "api_key_env": "HUNYUAN_API_KEY",
+        "label": "腾讯混元 Hunyuan (CN)",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "label": "OpenRouter (international aggregator)",
+    },
+    "custom": {
+        "base_url": "",  # must be provided via config api.custom.base_url
+        "api_key_env": "CUSTOM_API_KEY",
+        "label": "Custom OpenAI-compatible endpoint",
+    },
+}
+
+DEFAULT_PROVIDER = "siliconflow"
+
+
 class APIClient:
-    """Unified API call client - SiliconFlow/OpenRouter"""
+    """Unified client for any OpenAI-compatible LLM provider (see PROVIDERS)."""
 
-    # API base URLs
-    SILICONFLOW_BASE = "https://api.siliconflow.cn/v1"
-    OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-
-    # Available models (fallback defaults)
+    # Available models (fallback default; SiliconFlow model id)
     MODEL_CHAT = "deepseek-ai/DeepSeek-V3"           # General dialogue
 
     def __init__(self):
         """Initialize API client"""
-        # Read API keys from environment
-        self.siliconflow_api_key = os.getenv('SILICONFLOW_API_KEY', '').strip()
-        self.openrouter_api_key = os.getenv('OPENROUTER_API_KEY', '').strip()
-
-        # Provider selection
-        self.provider = str(config.get("api.provider", "siliconflow")).strip().lower()
-        if self.provider not in ("siliconflow", "openrouter"):
-            print(f"⚠️  Unknown provider '{self.provider}', falling back to siliconflow")
-            self.provider = "siliconflow"
+        # Provider selection (validated against the PROVIDERS table)
+        self.provider = str(config.get("api.provider", DEFAULT_PROVIDER)).strip().lower()
+        if self.provider not in PROVIDERS:
+            print(f"⚠️  Unknown provider '{self.provider}', falling back to {DEFAULT_PROVIDER}")
+            print(f"   Supported: {', '.join(PROVIDERS)}")
+            self.provider = DEFAULT_PROVIDER
 
         # Active API key for text calls
         self.api_key = self._get_api_key(self.provider)
 
         if not self.api_key:
-            print("⚠️  API Key not configured")
-            if self.provider == "openrouter":
-                print("   Please set OPENROUTER_API_KEY in your .env file")
-            else:
-                print("   Please set SILICONFLOW_API_KEY in your .env file")
+            env_var = PROVIDERS[self.provider]["api_key_env"]
+            print(f"⚠️  API Key not configured for provider '{self.provider}'")
+            print(f"   Please set {env_var} in your .env file")
+
+    def _provider_meta(self, provider: str) -> Dict[str, str]:
+        return PROVIDERS.get(provider, PROVIDERS[DEFAULT_PROVIDER])
 
     def _get_api_key(self, provider: str) -> str:
-        if provider == "openrouter":
-            return self.openrouter_api_key
-        return self.siliconflow_api_key
+        env_var = self._provider_meta(provider)["api_key_env"]
+        return os.getenv(env_var, "").strip()
 
     def _get_base_url(self, provider: str) -> str:
-        if provider == "openrouter":
-            return config.get("api.openrouter.base_url", self.OPENROUTER_BASE)
-        return config.get("api.siliconflow.base_url", self.SILICONFLOW_BASE)
+        # config override wins; otherwise the provider table default
+        return config.get(
+            f"api.{provider}.base_url",
+            self._provider_meta(provider)["base_url"],
+        )
 
     def _get_timeout(self, provider: str) -> int:
-        if provider == "openrouter":
-            return config.get("api.openrouter.timeout", 120)
-        return config.get("api.siliconflow.timeout", 120)
+        return config.get(f"api.{provider}.timeout", config.get("api.default_timeout", 120))
 
     def _get_max_retries(self, provider: str) -> int:
-        if provider == "openrouter":
-            return config.get("api.openrouter.max_retries", 3)
-        return config.get("api.siliconflow.max_retries", 3)
+        return config.get(f"api.{provider}.max_retries", config.get("api.default_max_retries", 3))
 
     def _get_headers(self, provider: str) -> Dict[str, str]:
         api_key = self._get_api_key(provider)
         if not api_key:
-            raise ValueError("API Key not configured")
+            raise ValueError(
+                f"API Key not configured for provider '{provider}'. "
+                f"Set {self._provider_meta(provider)['api_key_env']} in your .env file."
+            )
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
 
-        # Optional OpenRouter headers
+        # Optional OpenRouter ranking/analytics headers
         if provider == "openrouter":
             referer = os.getenv("OPENROUTER_SITE_URL", "").strip()
             title = os.getenv("OPENROUTER_APP_NAME", "").strip()
@@ -100,40 +154,36 @@ class APIClient:
 
         return headers
 
-    def _call_api(
+    def _chat_completion_message(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         model: str,
         temperature: float = 0.7,
         max_tokens: int = 4000,
-        response_format: Optional[Dict[str, Any]] = None
-    ) -> str:
+        response_format: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Call text model API (SiliconFlow/OpenRouter)
+        Call the chat-completions endpoint and return the full assistant message.
 
-        Args:
-            messages: Message list
-            model: Model name (provider-specific)
-            temperature: Temperature parameter
-            max_tokens: Maximum token count
-            response_format: Response format (for forcing JSON output)
-
-        Returns:
-            Generated text
+        The message dict may contain a ``tool_calls`` list when ``tools`` is
+        provided and the model decides to call a tool (native function calling).
         """
         provider = self.provider
         headers = self._get_headers(provider)
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": max_tokens,
         }
-
-        # Add response format (if specified)
         if response_format:
             payload["response_format"] = response_format
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
 
         timeout = self._get_timeout(provider)
         max_retries = self._get_max_retries(provider)
@@ -152,9 +202,90 @@ class APIClient:
         result = call_api_with_retry(
             make_request,
             max_retries=max_retries,
+            base_delay=config.get("retry.base_delay", 2.0),
+            max_delay=config.get("retry.max_delay", 60.0),
+            backoff_factor=config.get("retry.backoff_factor", 2.0),
             api_name=f"{provider} ({model})"
         )
-        return result['choices'][0]['message']['content']
+        return result['choices'][0]['message']
+
+    def _call_api(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        response_format: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Call text model API (SiliconFlow/OpenRouter) and return the text content.
+
+        Args:
+            messages: Message list
+            model: Model name (provider-specific)
+            temperature: Temperature parameter
+            max_tokens: Maximum token count
+            response_format: Response format (for forcing JSON output)
+
+        Returns:
+            Generated text
+        """
+        message = self._chat_completion_message(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+        return message.get('content') or ""
+
+    def call_chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Call the text model with native tool/function calling enabled.
+
+        Returns the raw assistant message dict, which may contain ``tool_calls``.
+        Used by the agent's function-calling loop instead of text parsing.
+        """
+        model = self._get_text_model()
+        settings = self._get_text_settings()
+        return self._chat_completion_message(
+            messages=messages,
+            model=model,
+            temperature=settings["temperature"] if temperature is None else temperature,
+            max_tokens=settings["max_tokens"] if max_tokens is None else max_tokens,
+            tools=tools,
+            tool_choice="auto",
+        )
+
+    def get_vision_endpoint(self) -> Dict[str, Any]:
+        """
+        Resolve the vision endpoint for the active provider.
+
+        Returns a dict with: base_url, headers, model, timeout, max_retries.
+        Raises ValueError if no API key is configured for the active provider.
+        """
+        provider = self.provider
+        api_key = self._get_api_key(provider)
+        if not api_key:
+            raise ValueError(
+                f"No API key configured for provider '{provider}'. "
+                f"Set {self._provider_meta(provider)['api_key_env']} in your .env file."
+            )
+
+        return {
+            "provider": provider,
+            "base_url": self._get_base_url(provider),
+            "headers": self._get_headers(provider),
+            "model": config.get("llm.vision.model", "Qwen/Qwen3-VL-235B-A22B-Instruct"),
+            "timeout": self._get_timeout(provider),
+            "max_retries": self._get_max_retries(provider),
+        }
 
     def _get_text_model(self) -> str:
         """Resolve unified text model name from config with fallback."""

@@ -1,6 +1,11 @@
 """
-XHS Paper Engine ReAct Agent
-A ReAct (Reasoning + Acting) Agent powered by DeepSeek
+XHS Paper Engine Agent
+
+By default the agent uses the model's **native function calling** (tools are
+passed via the API's ``tools`` parameter and executed from ``tool_calls``). If
+the provider/model does not support tools, it transparently falls back to a
+text-based ReAct (Reasoning + Acting) loop that parses Thought/Action/Observation.
+Toggle with the ``use_function_calling`` flag on the agent.
 """
 
 import json
@@ -10,7 +15,6 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
-import asyncio
 
 from .tools.base import ToolRegistry, ToolResult, default_registry
 from . import tools as _tools  # Ensure tool registration side effects run
@@ -46,26 +50,6 @@ class AgentTrace:
     start_time: datetime = field(default_factory=datetime.now)
     end_time: Optional[datetime] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "task": self.task,
-            "steps": [
-                {
-                    "step": s.step_num,
-                    "thought": s.thought,
-                    "action": s.action,
-                    "action_input": s.action_input,
-                    "observation": s.observation[:500] if s.observation else None,
-                    "is_final": s.is_final,
-                    "final_answer": s.final_answer
-                }
-                for s in self.steps
-            ],
-            "success": self.success,
-            "error": self.error,
-            "duration_seconds": (self.end_time - self.start_time).total_seconds() if self.end_time else None
-        }
-
 
 class ReActAgent:
     """
@@ -87,12 +71,15 @@ class ReActAgent:
         verbose: bool = True,
         work_dir: Optional[str] = None,
         output_dir: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        use_function_calling: bool = True,
     ):
         self.registry = tool_registry or default_registry
         self.api_client = APIClient()
         self.max_steps = max_steps
         self.verbose = verbose
+        # Prefer the model's native tool calling; fall back to text ReAct parsing.
+        self.use_function_calling = use_function_calling
 
         # Session ID: used to distinguish each run, format YYYYMMDD_HHMMSS
         self.session_id = session_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -122,71 +109,33 @@ class ReActAgent:
         if self.verbose:
             print(f"   Session directory: {self.session_dir}")
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt"""
-        tools_desc = self.registry.get_tool_descriptions()
+    def _build_system_prompt(self, function_calling: bool = False) -> str:
+        """Build system prompt.
 
-        # Get research area configuration
-        rc = getattr(self, '_get_research_config', lambda: {
-            "keywords": ["LLM"],
-            "categories": ["cs.AI"],
-            "sources": ["arxiv"],
-            "days": 3
-        })()
+        When ``function_calling`` is True, the tools are supplied to the model
+        via the API's native ``tools`` parameter, so the text-based
+        Thought/Action/Observation protocol is omitted.
+        """
+        # In function-calling mode the model receives tool schemas natively, so
+        # we don't need to enumerate tools in the prompt or teach a text protocol.
+        tools_desc = "" if function_calling else self.registry.get_tool_descriptions()
 
-        return f"""You are XHS Paper Engine Agent, an intelligent paper recommendation and content creation assistant.
+        if function_calling:
+            protocol_block = """Working mode:
+Use the tools available to you (provided via the API) to complete the task. Call
+tools as needed; the system returns each tool's result. When the task is
+finished, reply with a normal message that summarizes the outcome (do not call a
+tool in that final message).
 
-Your capabilities:
-1. Search and discover the latest academic papers
-2. Analyze and filter valuable papers
-3. Write paper interpretation articles (blog, Xiaohongshu)
-4. Automatically publish content to Xiaohongshu
-
-**Available data sources (you can choose the most suitable one)**:
-- arxiv: Preprint server, latest AI/ML/CS papers, fast updates
-- semantic: Semantic Scholar, with citation data, suitable for finding high-impact papers
-- pubmed: Biomedical paper database
-- biorxiv: Biology preprint server
-
-**Data source selection suggestions (for reference only, you can judge independently)**:
-- Find latest AI/ML papers → Prioritize arxiv
-- Find highly cited papers or surveys → Prioritize semantic
-- Find medical/biological related → pubmed or biorxiv
-- If one source doesn't have results, try other sources
-
-**Current user research areas**:
-- Keywords: {', '.join(rc['keywords'])}
-- arXiv categories: {', '.join(rc['categories'])}
-
-**Publishing workflow (important)**:
-When publishing content, follow these steps:
-
-1. Xiaohongshu publishing:
-   - Call `login_xiaohongshu` to trigger QR code login if needed (user needs to scan with phone)
-   - After login, call `publish_xiaohongshu` to publish content
-   - After successful publishing, call `record_publish` to record publish history
-
-Note: `record_publish` only records history, not actual publishing! Must call `publish_xiaohongshu` first to actually publish.
-
-**Image extraction and filtering workflow**:
-1. First use `extract_figures` to extract images from PDF
-2. Check the `all_images` array in the result:
-   - If there are images, use `select_best_images` to intelligently filter best images
-   - If empty (extraction failed), use `capture_pdf_pages` to screenshot paper pages as images
-3. Image filtering tool descriptions:
-   - `analyze_images`: Analyze detailed information of all images in directory (dimensions, size, etc.)
-   - `select_best_images`: Automatically select most suitable images for publishing (recommended)
-4. **Xiaohongshu publishing**: Select 5-9 high-quality images, pass directly to `publish_xiaohongshu`
-
-{tools_desc}
-
-Output directories (this session):
-- Paper PDFs: {self.papers_dir}
-- Markdown: {self.markdown_dir}
-- Images: {self.figures_dir}
-- Posts: {self.posts_dir}
-
-Working mode (ReAct mode):
+Notes:
+- You decide which data source to use and what keywords to search.
+- Use the specified output directories above for all generated files.
+- If tool execution fails, analyze the reason and try a different approach.
+- Prefer `optimize_xiaohongshu_with_vision` to pick images; if no vision model is available, pass the extracted images directly to `publish_xiaohongshu`.
+- If `extract_figures` returns no figures, this paper is unsuitable — go back and select a different paper instead of publishing page screenshots.
+"""
+        else:
+            protocol_block = """Working mode (ReAct mode):
 You need to complete tasks following the "thought-action-observation" cycle.
 
 **Important: You can only output Thought and Action, never output Observation!**
@@ -195,7 +144,7 @@ Observation is the result automatically returned by the system after executing t
 Each time you only need to output:
 ```
 Thought: [Your thinking process]
-Action: {{"tool": "tool_name", "args": {{parameters}}}}
+Action: {"tool": "tool_name", "args": {parameters}}
 ```
 
 Then stop and wait for the system to return Observation.
@@ -219,9 +168,71 @@ Notes:
 - **You have full autonomy to decide which data source to use and what keywords to search**
 - Keep concise, do not repeat known information
 - Please use the above specified directories for all output files
-- **Be sure to use `select_best_images` to filter images before publishing**: Xiaohongshu supports multiple images, select 5-9 most valuable ones
-- If `extract_figures` returns empty `all_images`, must use `capture_pdf_pages` to get images
+- **Image selection**: prefer `optimize_xiaohongshu_with_vision`; if no vision model is configured, pass the extracted images directly to `publish_xiaohongshu`
+- If `extract_figures` returns empty `all_images`, the paper is unsuitable — go back to selection and choose a different paper (never publish full-page screenshots)
 """
+
+        # Get research area configuration
+        rc = getattr(self, '_get_research_config', lambda: {
+            "keywords": ["LLM"],
+            "categories": ["cs.AI"],
+            "sources": ["arxiv"],
+            "days": 3
+        })()
+
+        return f"""You are XHS Paper Engine Agent, an intelligent paper recommendation and content creation assistant.
+
+Your capabilities:
+1. Search and discover the latest academic papers
+2. Analyze and filter valuable papers
+3. Write paper interpretation articles (blog, Xiaohongshu)
+4. Automatically publish content to Xiaohongshu
+
+**Available data sources (you can choose the most suitable one)**:
+- arxiv: Preprint server, latest AI/ML/CS papers, fast updates
+- semantic: Semantic Scholar, with citation data, suitable for finding high-impact papers (requires S2_API_KEY; disabled if not configured)
+
+**Data source selection suggestions (for reference only, you can judge independently)**:
+- Find latest AI/ML papers → Prioritize arxiv
+- Find highly cited papers or surveys → Prioritize semantic (only if S2_API_KEY is configured)
+- If one source doesn't have results, broaden the time range or try different keywords
+
+**Current user research areas**:
+- Keywords: {', '.join(rc['keywords'])}
+- arXiv categories: {', '.join(rc['categories'])}
+
+**Publishing workflow (important)**:
+When publishing content, follow these steps:
+
+1. Xiaohongshu publishing:
+   - Call `login_xiaohongshu` to trigger QR code login if needed (user needs to scan with phone)
+   - After login, call `publish_xiaohongshu` to publish content
+   - After successful publishing, call `record_publish` to record publish history
+
+Note: `record_publish` only records history, not actual publishing! Must call `publish_xiaohongshu` first to actually publish.
+
+**Image extraction and selection workflow**:
+1. First use `extract_figures` to extract images from PDF
+2. Check the `all_images` array in the result:
+   - If empty (this paper has no recognizable figures/tables), it is NOT suitable for an
+     image-heavy Xiaohongshu post. Do NOT publish full-page screenshots — they look bad.
+     Go back to paper selection and pick a different unpublished paper, then retry.
+3. Selecting which images to publish:
+   - Preferred: `optimize_xiaohongshu_with_vision` — a vision model looks at the images and
+     picks the 3-5 most informative ones (and aligns the post text to them).
+   - If no vision model is configured (some providers have none), just pass the extracted
+     images directly to `publish_xiaohongshu` (it accepts up to 18; send the first few).
+4. **Xiaohongshu publishing**: pass the selected images to `publish_xiaohongshu`
+
+{tools_desc}
+
+Output directories (this session):
+- Paper PDFs: {self.papers_dir}
+- Markdown: {self.markdown_dir}
+- Images: {self.figures_dir}
+- Posts: {self.posts_dir}
+
+{protocol_block}"""
 
     def _parse_response(self, response: str) -> Tuple[str, Optional[str], Optional[Dict], Optional[str]]:
         """
@@ -298,9 +309,120 @@ Notes:
 
         return thought, action_name, action_args, final_answer
 
+    def _apply_output_paths(self, action_name: str, action_args: Dict[str, Any]) -> None:
+        """Auto-fill session output paths when the tool call omits them."""
+        if action_args is None:
+            return
+
+        # Download papers -> papers directory
+        if action_name == "download_paper":
+            action_args.setdefault("output_dir", str(self.papers_dir))
+
+        # Extract figures -> figures directory
+        if action_name == "extract_figures":
+            action_args.setdefault("output_dir", str(self.figures_dir))
+
+        # PDF to Markdown -> markdown directory
+        if action_name == "convert_pdf_to_markdown" and "output_path" not in action_args:
+            pdf_path = action_args.get("pdf_path", "paper.pdf")
+            action_args["output_path"] = str(self.markdown_dir / (Path(pdf_path).stem + ".md"))
+
+        # Writing tools -> posts directory
+        if action_name in ("write_xiaohongshu", "write_blog") and "output_path" not in action_args:
+            suffix = {"write_xiaohongshu": "xiaohongshu", "write_blog": "blog"}.get(action_name, "output")
+            action_args["output_path"] = str(self.posts_dir / f"{suffix}.md")
+
     async def run(self, task: str) -> AgentTrace:
+        """Execute a task, using native function calling when enabled."""
+        if self.use_function_calling:
+            try:
+                return await self._run_function_calling(task)
+            except Exception as e:
+                # If the provider/model doesn't support tools, fall back to text ReAct.
+                if self.verbose:
+                    print(f"\n⚠️ Function-calling run failed ({e}); falling back to text ReAct mode.")
+        return await self._run_text(task)
+
+    async def _run_function_calling(self, task: str) -> AgentTrace:
+        """Agent loop driven by the model's native tool/function calling.
+
+        API/transport errors (e.g. a provider that doesn't support ``tools``)
+        propagate to ``run()``, which then falls back to text ReAct mode.
         """
-        Execute task
+        trace = AgentTrace(task=task)
+
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": self._build_system_prompt(function_calling=True)},
+            {"role": "user", "content": f"Task: {task}"},
+        ]
+        tools = self.registry.get_schemas()
+
+        step_num = 0
+        while step_num < self.max_steps:
+            step_num += 1
+            if self.verbose:
+                print(f"\n{'='*60}\nStep {step_num}\n{'='*60}")
+
+            message = self.api_client.call_chat_with_tools(messages, tools=tools)
+            messages.append(message)
+
+            tool_calls = message.get("tool_calls") or []
+
+            # No tool calls -> the model's content is the final answer.
+            if not tool_calls:
+                final_answer = message.get("content") or ""
+                trace.steps.append(AgentStep(
+                    step_num=step_num, thought="", is_final=True, final_answer=final_answer
+                ))
+                trace.success = True
+                if self.verbose:
+                    print(f"\n✅ Task completed!\nFinal Answer: {final_answer}")
+                break
+
+            # Execute every requested tool call and feed results back.
+            for tool_call in tool_calls:
+                fn = tool_call.get("function", {})
+                action_name = fn.get("name")
+                raw_args = fn.get("arguments") or "{}"
+                try:
+                    action_args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                except json.JSONDecodeError:
+                    action_args = {}
+
+                if self.verbose:
+                    _print_flush(f"\n🔧 Execute tool: {action_name}")
+                    _print_flush(f"   Parameters: {json.dumps(action_args, ensure_ascii=False)}")
+
+                self._apply_output_paths(action_name, action_args)
+                result = await self.registry.execute(action_name, **action_args)
+                observation = result.to_observation()
+
+                if self.verbose:
+                    obs_display = observation[:800] + "..." if len(observation) > 800 else observation
+                    _print_flush(f"\n{'─'*40}\n📋 Tool result:\n{'─'*40}\n{obs_display}\n{'─'*40}")
+                    if not result.success:
+                        _print_flush(f"⚠️ Tool execution failed: {result.error}")
+
+                trace.steps.append(AgentStep(
+                    step_num=step_num, thought="", action=action_name,
+                    action_input=action_args, observation=observation,
+                ))
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id"),
+                    "content": observation,
+                })
+        else:
+            trace.error = f"Reached maximum steps ({self.max_steps}), task not completed"
+            if self.verbose:
+                print(f"\n⚠️ {trace.error}")
+
+        trace.end_time = datetime.now()
+        return trace
+
+    async def _run_text(self, task: str) -> AgentTrace:
+        """
+        Execute task (text-based ReAct fallback).
 
         Args:
             task: User task description
@@ -396,37 +518,7 @@ Notes:
                         _print_flush(f"   Parameters: {json.dumps(action_args, ensure_ascii=False)}")
 
                     # Auto-fill output paths (using session directory)
-                    # Download papers -> papers directory
-                    if action_name == "download_paper":
-                        if "output_dir" not in action_args:
-                            action_args["output_dir"] = str(self.papers_dir)
-
-                    # Extract images -> figures directory
-                    if action_name == "extract_figures":
-                        if "output_dir" not in action_args:
-                            action_args["output_dir"] = str(self.figures_dir)
-
-                    # Capture PDF pages -> figures directory
-                    if action_name == "capture_pdf_pages":
-                        if "output_dir" not in action_args:
-                            action_args["output_dir"] = str(self.figures_dir)
-
-                    # PDF to Markdown -> markdown directory
-                    if action_name == "convert_pdf_to_markdown":
-                        if "output_path" not in action_args:
-                            pdf_path = action_args.get("pdf_path", "paper.pdf")
-                            md_name = Path(pdf_path).stem + ".md"
-                            action_args["output_path"] = str(self.markdown_dir / md_name)
-
-                    # Writing tools -> posts directory
-                    if action_name in ["write_xiaohongshu", "write_blog"]:
-                        if "output_path" not in action_args:
-                            suffix_map = {
-                                "write_xiaohongshu": "xiaohongshu",
-                                "write_blog": "blog"
-                            }
-                            suffix = suffix_map.get(action_name, "output")
-                            action_args["output_path"] = str(self.posts_dir / f"{suffix}.md")
+                    self._apply_output_paths(action_name, action_args)
 
                     # Execute tool
                     _print_flush(f"\n   ⏳ Executing tool...")
@@ -476,10 +568,6 @@ Notes:
         trace.end_time = datetime.now()
         return trace
 
-    def run_sync(self, task: str) -> AgentTrace:
-        """Synchronously execute task"""
-        return asyncio.run(self.run(task))
-
 
 class XHSPaperEngineAgent(ReActAgent):
     """
@@ -496,102 +584,6 @@ class XHSPaperEngineAgent(ReActAgent):
             "sources": config.get("research.sources", ["arxiv", "semantic"]),
             "days": config.get("research.days", 3)
         }
-
-    async def find_and_publish_paper(
-        self,
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        platform: str = "xiaohongshu"
-    ) -> AgentTrace:
-        """
-        Search for papers and publish to specified platform
-
-        Args:
-            query: Search keywords (if not specified, Agent decides independently)
-            category: arXiv category (if not specified, Agent decides independently)
-            platform: Publishing platform (xiaohongshu only)
-        """
-        rc = self._get_research_config()
-        days = rc["days"]
-
-        # Build task description
-        query_hint = f'Keyword "{query}"' if query else f'Keywords (reference: {", ".join(rc["keywords"][:3])})'
-        category_hint = f'Category {category}' if category else f'Category (reference: {", ".join(rc["categories"][:3])})'
-
-        # Publishing platform instructions (Xiaohongshu only)
-        publish_instructions = """
-**Publish to Xiaohongshu**:
-- Call login_xiaohongshu to let user scan QR if needed
-- After login, call publish_xiaohongshu to publish"""
-
-        task = f"""Please complete the following task:
-
-Search conditions (for reference, you can adjust independently):
-- {query_hint}
-- {category_hint}
-- Time range: Last {days} days
-
-Execution steps:
-1. Independently select data source and search strategy to find relevant papers
-2. Check which papers have not been published yet
-3. From unpublished papers, select the one with most science communication value
-4. Download this paper and extract images
-5. Write content (Xiaohongshu post)
-{publish_instructions}
-6. After successful publishing, call record_publish to record publish history
-
-Note: record_publish is only for recording, not publishing! Must actually publish first before recording.
-
-Please start executing."""
-
-        return await self.run(task)
-
-    async def generate_daily_content(self) -> AgentTrace:
-        """Generate daily content and publish to platforms"""
-        rc = self._get_research_config()
-
-        keywords_str = ", ".join(rc["keywords"][:3])  # Take at most 3 keywords
-        categories_str = ", ".join(rc["categories"][:3])
-        days = rc["days"]
-
-        task = f"""Please complete today's paper recommendation and publishing task:
-
-User's research areas of interest:
-- Keywords: {keywords_str}
-- arXiv categories: {categories_str}
-- Time range: Last {days} days
-
-Execution steps:
-1. Select appropriate data source to search papers (arxiv/semantic/pubmed/biorxiv)
-2. Check deduplication, filter out already published papers
-3. Select the most valuable paper
-4. Download paper and extract images
-5. Write Xiaohongshu post
-
-**Publish to Xiaohongshu (must execute)**:
-6. Publish to Xiaohongshu:
-   - Call login_xiaohongshu to let user scan QR login if needed
-   - After login, call publish_xiaohongshu to publish post
-7. Record publish history (record_publish)
-
-Note: record_publish is only for recording, not publishing! Must call publish_xiaohongshu first to actually publish.
-
-Please start executing."""
-
-        return await self.run(task)
-
-    async def analyze_paper(self, arxiv_id: str) -> AgentTrace:
-        """Analyze specified paper"""
-        task = f"""Please analyze paper arXiv:{arxiv_id}:
-
-1. Download this paper
-2. Extract figures and tables from the paper
-3. Write a detailed technical blog article
-4. Summarize the paper's core contributions and innovations
-
-Please start executing."""
-
-        return await self.run(task)
 
 
 # Convenience functions

@@ -3,7 +3,7 @@ Configuration management module - Centralized management of all configuration it
 
 Usage:
     from dp_core.config import config
-    timeout = config.get("api.deepseek.timeout", 120)
+    timeout = config.get("api.siliconflow.timeout", 120)
 """
 
 import os
@@ -28,76 +28,28 @@ DEFAULT_CONFIG = {
     },
     "api": {
         "provider": "siliconflow",
-        "deepseek": {
-            "timeout": 120,
-            "max_retries": 3,
-            "base_url": "https://api.deepseek.com/v1"
-        },
-        "siliconflow": {
-            "timeout": 60,
-            "max_retries": 3,
-            "base_url": "https://api.siliconflow.cn/v1"
-        },
-        "openrouter": {
-            "timeout": 120,
-            "max_retries": 3,
-            "base_url": "https://openrouter.ai/api/v1"
-        },
-        "arxiv": {
-            "timeout": 30,
-            "max_retries": 3,
-            "rate_limit_delay": 1.1
-        },
-        "semantic_scholar": {
-            "timeout": 20,
-            "max_retries": 3,
-            "rate_limit_delay": 1.1
-        },
-        "xiaohongshu_mcp": {
-            "timeout": 10,
-            "max_retries": 3
-        }
+        # Per-provider base URLs live in the PROVIDERS table (api_client.py).
+        # These are global fallbacks; override per provider via api.<provider>.*.
+        "default_timeout": 120,
+        "default_max_retries": 3,
     },
     "llm": {
         "text": {
-            "model": "deepseek-chat",
+            "model": "deepseek-ai/DeepSeek-V3",
             "temperature": 0.7,
             "max_tokens": 3000
         },
         "vision": {
-            "model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-            "temperature": 0.7,
-            "max_tokens": 4000
-        },
-        "ocr": {
-            "model": "deepseek-ai/DeepSeek-OCR"
+            "model": "Qwen/Qwen3-VL-235B-A22B-Instruct"
         }
     },
     "search": {
-        "max_results": 100,
-        "issues_result": 15,
-        "recent_days": 3,
-        "recent_years": 0,
-        "min_citations": 0,
-        "page_size": 100
-    },
-    "batch": {
-        "paper_selection_batch_size": 20,
-        "paper_selection_top_k": 20,
-        "cli_timeout": 600,
-        "publish_timeout": 1200,
-        "browser_agent_max_steps": 800,
-        "browser_agent_max_failures": 10
-    },
-    "ocr": {
-        "dpi": 180,
-        "max_tokens": 6000,
-        "mode": "markdown"
+        "max_results": 50,
+        "min_citations": 0
     },
     "extraction": {
-        "min_score": 0.7,
-        "dpi": 300,
-        "model_dir": ""
+        "dpi": 200,
+        "pdffigures2_jar": ""
     },
     "retry": {
         "base_delay": 2.0,
@@ -106,9 +58,10 @@ DEFAULT_CONFIG = {
     },
     "publish": {
         "xiaohongshu": {
-            "save_as_draft": False,  # Changed to default direct publishing
+            "enabled": False,  # Opt-in master switch for automated publishing
+            "save_as_draft": False,
             "visibility": "private",  # public=publicly visible, private=only visible to self
-            "default_tags": ["AI Research", "Tech Frontier"]
+            "max_content_len": 1000
         }
     }
 }
@@ -161,14 +114,14 @@ class Config:
         Get configuration value, supports dot-separated paths
 
         Args:
-            key: Configuration key, e.g., "api.deepseek.timeout"
+            key: Configuration key, e.g., "api.siliconflow.timeout"
             default: Default value
 
         Returns:
             Configuration value
 
         Example:
-            >>> config.get("api.deepseek.timeout", 120)
+            >>> config.get("api.siliconflow.timeout", 120)
             120
         """
         keys = key.split(".")
