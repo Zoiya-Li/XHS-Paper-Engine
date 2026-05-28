@@ -20,37 +20,44 @@ XHS Paper Engine is an intelligent academic paper recommendation and publishing 
 
 ## Features
 
-- **Intelligent Paper Search**: Supports multiple academic data sources including arXiv and Semantic Scholar (optional)
-- **Automatic Deduplication**: Smart deduplication mechanism based on title similarity and publication history
-- **Paper Selection**: Uses LLM to score papers across multiple dimensions and automatically selects the most valuable ones
-- **PDF Processing**: Automatically downloads PDFs, extracts images, and converts to Markdown
-- **Content Generation**: Automatically generates content for Xiaohongshu (Little Red Book) posts
-- **Auto Publishing**: Supports publishing to Xiaohongshu
-- **Configurable**: Flexibly adjust various parameters through YAML configuration file
-- **Provider Optionality**: Supports SiliconFlow or OpenRouter for text models
-- **PDF text extraction**: Reads the PDF text layer with PyMuPDF (fast, free; works for arXiv-style born-digital PDFs), falling back to `pdftotext` for scanned PDFs
+- **Intelligent Paper Search**: arXiv and (optional) Semantic Scholar, filtered to the last N days
+- **Targeted Mode**: process a specific local PDF you provide via `--pdf` (skips search)
+- **Automatic Deduplication**: by arXiv ID and title similarity vs. publication history
+- **Paper Selection**: LLM scores candidate papers and picks the most shareable one
+- **Figure/Table Extraction**: [pdffigures2](https://github.com/allenai/pdffigures2) (Java JAR) — clean figure crops + captions, no Python ML stack
+- **PDF→Text**: PyMuPDF text layer (fast, free), falling back to `pdftotext` for scans
+- **Content + Vision**: generates a Xiaohongshu post, then a vision (VL) model selects the best images and aligns the text
+- **Auto Publishing**: publishes to Xiaohongshu (browser automation; private by default)
+- **Multiple LLM Providers**: SiliconFlow, DashScope/Qwen, Moonshot/Kimi, Zhipu/GLM, OpenRouter, or any OpenAI-compatible endpoint
+- **Cross-platform Scheduling**: one daily auto-run on macOS (launchd), Windows (Task Scheduler), or Linux (cron)
+- **Configurable**: all parameters via `config.yaml`
 
 ## Architecture
 
 ```
 XHS Paper Engine
 ├── dp_core/              # Core module
-│   ├── agent.py         # ReAct Agent implementation
-│   ├── api_client.py    # LLM API client (SiliconFlow/OpenRouter)
-│   ├── config.py        # Configuration management
-│   ├── retry.py         # Retry mechanism
-│   ├── analytics.py     # Data analytics
-│   ├── dedup.py         # Deduplication logic
-│   ├── tools/           # Agent toolset
-│   │   ├── paper_tools.py      # Paper search, download, processing
-│   │   ├── writing_tools.py    # Content generation
-│   │   ├── publish_tools.py    # Publishing tools
-│   │   └── analytics_tools.py  # Analytics tools
-│   └── publishers/      # Publishers
-│       └── xiaohongshu.py      # Xiaohongshu publisher
+│   ├── agent.py                 # Agent loop (native function calling + ReAct fallback)
+│   ├── api_client.py            # LLM client for any OpenAI-compatible provider
+│   ├── config.py                # Configuration management
+│   ├── retry.py                 # Retry mechanism
+│   ├── analytics.py             # Publication recording (backs deduplication)
+│   ├── dedup.py                 # Deduplication logic
+│   ├── extract_figures_tables.py# Figure/table extraction via pdffigures2
+│   ├── scheduler.py             # Cross-platform daily scheduling
+│   ├── tools/                   # Agent toolset
+│   │   ├── paper_tools.py            # Search, dedup, download, extract, PDF→text
+│   │   ├── writing_tools.py          # Blog / Xiaohongshu content generation
+│   │   ├── vision_optimization_tools.py  # VL image selection + post optimization
+│   │   ├── publish_tools.py          # Login, publish, record
+│   │   └── analytics_tools.py        # Publish history
+│   └── publishers/
+│       └── xiaohongshu.py            # Xiaohongshu publisher (Playwright)
+├── docker/pdffigures2.Dockerfile     # Builder image for the pdffigures2 JAR
+├── scripts/build_pdffigures2_jar.sh  # One-off JAR build helper
 ├── config.yaml          # Configuration file
 ├── .env.example         # Environment variable template
-└── auto_run.py          # Automated run entry point
+└── auto_run.py          # Entry point (daily run / --pdf / --dry-run / scheduling)
 ```
 
 ## Quick Start
@@ -92,10 +99,18 @@ playwright install chromium
 # Windows: choco install temurin   (or install Adoptium Temurin)
 
 # 2) The pdffigures2 fat JAR -> ~/.xhs-paper-engine/pdffigures2.jar
-#    Option A: build it (requires Docker; one-off, ~a few minutes)
+#    Option A: build it with Docker (one-off, ~a few minutes)
 ./scripts/build_pdffigures2_jar.sh
 #    Option B: download a prebuilt JAR from the project releases and drop it at
 #              ~/.xhs-paper-engine/pdffigures2.jar
+#    Option C: manual build without Docker (macOS/Linux example)
+#       pdffigures2 requires sbt 1.7.x; newer sbt versions are incompatible.
+#       brew install sbt          # installs latest sbt — may be too new
+#       curl -fL -o /tmp/sbt-launch-1.7.1.jar \
+#         https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.7.1/sbt-launch-1.7.1.jar
+#       git clone --depth 1 https://github.com/allenai/pdffigures2.git /tmp/pdffigures2
+#       cd /tmp/pdffigures2 && java -jar /tmp/sbt-launch-1.7.1.jar -batch assembly
+#       mkdir -p ~/.xhs-paper-engine && cp /tmp/pdffigures2/pdffigures2.jar ~/.xhs-paper-engine/
 ```
 
 The JAR location is resolved from `PDFFIGURES2_JAR`, then `extraction.pdffigures2_jar`
@@ -110,60 +125,97 @@ brew install poppler
 # Windows: choco install poppler   (or: scoop install poppler)
 ```
 
-> Verify everything is ready with `python auto_run.py --dry-run` — it checks the
-> API key, Java, and the JAR, and refuses to run if the figure backend is missing.
-
 ### 2. Configure Environment Variables
 
-Copy `.env.example` to `.env` and fill in your API keys:
+Copy `.env.example` to `.env` and fill in your API key:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` file:
+Edit `.env`. You only need the key for the **one** provider you will use (default is `siliconflow`):
 
 ```bash
-# Required: SiliconFlow API Key (default text + vision model)
+# Default provider: SiliconFlow (text + vision)
 SILICONFLOW_API_KEY=sk-your-api-key-here
 
-# Optional: OpenRouter (set api.provider=openrouter in config.yaml)
-OPENROUTER_API_KEY=sk-your-openrouter-api-key
-# Optional metadata for OpenRouter ranking/analytics
-OPENROUTER_SITE_URL=https://your.site
-OPENROUTER_APP_NAME=XHSPaperEngine
-
-# Optional: Semantic Scholar API Key
+# Optional: Semantic Scholar (enables the `semantic` data source)
 S2_API_KEY=your-s2-api-key
 ```
 
-If you don't provide `S2_API_KEY`, the system still runs normally, and Semantic Scholar is disabled by default. To enable it, set the key and add `"semantic"` to `research.sources` in `config.yaml`.
+See `.env.example` for keys of other providers.
 
-### 3. Run
+### 3. Edit `config.yaml`
+
+Before running, open `config.yaml` and change at least these two sections:
+
+**Research topic** — what papers to search for:
+```yaml
+research:
+  keywords:
+    - "LLM"
+    - "Computer Vision"
+```
+
+**LLM provider & models** — must match the API key you set in `.env`:
+```yaml
+api:
+  provider: "siliconflow"   # or dashscope / moonshot / zhipu / openrouter
+
+llm:
+  text:
+    model: "deepseek-ai/DeepSeek-V3"
+  vision:
+    model: "Qwen/Qwen3-VL-32B-Instruct"
+```
+
+> A **vision (VL) model is required** — it picks the best figures and aligns the post text to them. `python auto_run.py --dry-run` checks that your provider + key + model combo actually works.
+
+### 4. Verify
 
 ```bash
-# Daily mode: search arXiv for recent papers, pick one, generate the post
-python auto_run.py
-
-# Search a wider window
-python auto_run.py --recent-days 7
-
-# Validate environment only (API key, Java + pdffigures2 JAR), no run
 python auto_run.py --dry-run
 ```
 
-#### Target a specific paper
+This validates your API key, the VL model, Java, and the pdffigures2 JAR — without starting the agent. Fix any errors it reports before proceeding.
 
-Skip the search and process one PDF you provide — put the file anywhere and pass its path:
+### 5. Run
 
 ```bash
+# Daily mode: search arXiv, pick a paper, generate & publish (private by default)
+python auto_run.py
+
+# Or process a specific PDF you already have (skips search)
 python auto_run.py --pdf /path/to/paper.pdf
-python auto_run.py --pdf /path/to/paper.pdf --title "Attention Is All You Need"
 ```
 
-In this mode the pipeline extracts figures from your PDF, derives the title/abstract
-(or uses `--title`), writes the post, and runs vision optimization. If the PDF has no
-extractable figures it reports the paper as unsuitable (it won't switch to another one).
+**What happens on the first run:**
+1. The agent searches arXiv, downloads a paper, extracts figures, and writes a post.
+2. A **Chromium browser window pops up** for **Xiaohongshu QR-code login**. Open your phone's 小红书 App → scan the code → the browser will close automatically. Your session is saved to `~/.xhs-paper-engine/xiaohongshu_cookies.json`; later runs reuse it without re-scanning.
+3. The post is published as **private (仅自己可见)** — you review it before making it public.
+
+> **Set `publish.xiaohongshu.enabled: false`** in `config.yaml` if you want to stop at the local draft and never trigger the browser.
+
+### 6. After Your First Run — Review Before Going Public
+
+All generated files are saved under `output/<timestamp>/`:
+
+```
+output/20260528_123456/
+├── papers/paper.pdf          # downloaded PDF
+├── figures/                  # extracted figure images
+├── tables/                   # extracted table images
+├── markdown/paper.md         # converted text
+└── posts/xiaohongshu_post.md # generated post (title + content + tags)
+```
+
+The post is already on your Xiaohongshu account as a **private note**:
+1. Open the 小红书 App → **我** → **私密笔记**.
+2. Find the auto-generated post, read it carefully.
+3. Edit if needed (fix facts, tone, images).
+4. When satisfied, change visibility from **私密** to **公开**.
+
+Only switch to public after you've personally reviewed the content — LLM-generated summaries can contain errors or misrepresent a paper.
 
 ## Configuration
 
@@ -248,17 +300,21 @@ api:
 
 ## Permissions & Login
 
-- **Xiaohongshu**: First publish requires QR code login. A Playwright browser window will open for scanning. Cookies are saved to `~/.xhs-paper-engine/` for subsequent runs.
+- **Xiaohongshu**: The first publish requires a QR-code login. A Playwright browser window opens for scanning. After one successful scan, the full session state (cookies + localStorage) is saved to `~/.xhs-paper-engine/xiaohongshu_cookies.json`, and later runs reuse it without re-scanning. Delete that file to force a fresh login.
 
 ### Publishing Parameters
 
 ```yaml
 publish:
   xiaohongshu:
+    enabled: true        # publish automatically; set false to stop at the draft
     save_as_draft: false
-    visibility: private  # public or private
+    visibility: private  # public or private (private = only-self)
     max_content_len: 1000  # Xiaohongshu content length limit
 ```
+
+**Why private by default?**  
+Auto-generated content can contain errors or misrepresent a paper. The default `visibility: private` lets you open the post in your Xiaohongshu app, review and edit it, then manually switch to public when you're satisfied. Set `enabled: false` if you prefer to stop at the local draft file instead.
 
 For more configuration options, please refer to the comments in `config.yaml`.
 
@@ -275,15 +331,17 @@ XHS Paper Engine provides the following Agent tools:
 | `check_duplicate` | Check if a paper has been published |
 | `select_best_paper` | Select the best paper |
 | `download_paper` | Download paper PDF |
-| `extract_figures` | Extract images from papers |
-| `convert_pdf_to_markdown` | Convert PDF to Markdown |
-| `analyze_images_with_vision` | Analyze image content with vision model |
-| `write_blog` | Generate blog article |
-| `write_xiaohongshu` | Generate Xiaohongshu post |
+| `extract_figures` | Extract figures/tables from a paper (pdffigures2) |
+| `convert_pdf_to_markdown` | Convert PDF to text/Markdown |
+| `write_blog` | Generate a blog article (draft export) |
+| `write_xiaohongshu` | Generate a Xiaohongshu post |
+| `optimize_xiaohongshu_with_vision` | VL model selects best images + refines the post |
+| `analyze_images_with_vision` | Analyze image content with the vision model |
 | `login_xiaohongshu` | Trigger QR login for Xiaohongshu |
 | `publish_xiaohongshu` | Publish to Xiaohongshu |
 | `record_publish` | Record publish history |
 | `get_publish_history` | Get publish history |
+| `read_file` / `list_files` | Read a file / list a directory (utility) |
 
 ## Scheduled Tasks Setup
 
@@ -313,6 +371,22 @@ so activate/point at the right environment when installing.
 
 > The older macOS-only `setup_schedule.sh` (twice-daily launchd templates) still
 > works if you prefer it, but the built-in `--install-schedule` is the portable path.
+
+## Troubleshooting
+
+Run `python auto_run.py --dry-run` first — it validates the API key, the VL model, and the figure-extraction stack without invoking the agent.
+
+**Figure extraction fails with "Unable to locate a Java Runtime"**
+pdffigures2 needs a real Java runtime. On macOS, `/usr/bin/java` is only a *stub* that fails at runtime when no JDK is installed — having it on `PATH` is not enough. Install a real JDK (`brew install openjdk`; Linux `sudo apt-get install -y default-jre`; Windows `choco install temurin`). The app verifies java actually runs and also checks the Homebrew keg-only location automatically.
+
+**Vision step fails with `403 Forbidden`**
+Your provider/account may not have access to the configured VL model (e.g. a SiliconFlow account without that specific `Qwen…-VL` model). Switch `api.provider` (or `llm.vision.model`) in `config.yaml` to a vision model you can access — OpenRouter is a reliable fallback. A VL model is required; the run won't curate images without it.
+
+**It keeps asking me to scan the QR code**
+A successful scan saves your session to `~/.xhs-paper-engine/xiaohongshu_cookies.json`; later runs reuse it. If you're re-prompted every run, make sure that file exists and is writable. (Login is only considered valid after the page settles — the creator dashboard redirects guests to `/login` after ~5s, so the check waits for that.)
+
+**Publishing reaches the editor but can't click a button / set visibility**
+Xiaohongshu's web UI changes often and the automation targets specific selectors (the publish control is a custom `<xhs-publish-btn>` element, and a topic-suggestion popup can overlay it). When a step fails, a debug screenshot is saved to `~/.xhs-paper-engine/debug/`. Open it, then update the selector lists near the top of `dp_core/publishers/xiaohongshu.py` and bump `SELECTORS_LAST_VERIFIED`. Automated publishing is inherently fragile — there is no stable public API.
 
 ## Development
 
@@ -392,6 +466,8 @@ Contributions are welcome! Please feel free to submit Issues and Pull Requests!
 
 ## Acknowledgments
 
-- [DeepSeek](https://www.deepseek.com/) - LLM API support
+- [pdffigures2](https://github.com/allenai/pdffigures2) (Allen Institute for AI) - figure/table extraction
+- [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF text extraction
 - [Playwright](https://playwright.dev/) - Browser automation framework
 - [arXiv](https://arxiv.org/), [Semantic Scholar](https://www.semanticscholar.org/) - Paper data sources
+- LLM providers: SiliconFlow, Alibaba DashScope, Moonshot, Zhipu, OpenRouter
