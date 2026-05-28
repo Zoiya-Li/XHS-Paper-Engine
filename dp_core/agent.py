@@ -211,6 +211,9 @@ When publishing content, follow these steps:
 
 Note: `record_publish` only records history, not actual publishing! Must call `publish_xiaohongshu` first to actually publish.
 
+**Content creation rules (important)**:
+- When calling `write_xiaohongshu`, the `paper_title` parameter MUST be the **original English title** of the paper, never translate it into Chinese. The post body can be in Chinese, but the paper citation at the end must use the exact original English title.
+
 **Image extraction and selection workflow**:
 1. First use `extract_figures` to extract images from PDF
 2. Check the `all_images` array in the result:

@@ -74,7 +74,7 @@ llm:
 
   # Vision-language model (image analysis/optimization)
   vision:
-    model: "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    model: "Qwen/Qwen3-VL-32B-Instruct"
 
 # ============================================================
 # Paper Search Parameters
