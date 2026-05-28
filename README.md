@@ -7,6 +7,14 @@
 
 XHS Paper Engine is an intelligent academic paper recommendation and publishing system that automatically searches, filters, downloads the latest papers, and generates content suitable for social media publishing.
 
+## 📈 Real-world results
+
+<p align="center">
+  <img src="docs/images/showcase.jpg" alt="Xiaohongshu account stats: followers and likes" width="480">
+</p>
+
+> A Xiaohongshu account run entirely on auto-generated paper posts: **100+ followers** and **1,400+ likes & saves**.
+
 > ## ⚠️ Disclaimer — Read Before Use
 >
 > This project is provided **for learning and research purposes only**. Use it at your own risk.
