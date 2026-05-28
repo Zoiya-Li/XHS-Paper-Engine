@@ -42,25 +42,47 @@ _FIGURES_INSTALL_HINT = (
 )
 
 
+def _java_works(path: str) -> bool:
+    """True only if running `<path> -version` actually succeeds.
+
+    macOS ships a stub at /usr/bin/java that *exists* but exits 1 with
+    "Unable to locate a Java Runtime" when no JDK is installed. Checking the
+    path alone is not enough — we must run it.
+    """
+    try:
+        proc = subprocess.run(
+            [path, "-version"], capture_output=True, text=True, timeout=15
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def resolve_java() -> str | None:
-    """Locate a usable `java` executable, or None."""
+    """Locate a `java` executable that actually runs, or None.
+
+    Each candidate is verified with `java -version`; non-functional shims
+    (notably the macOS /usr/bin/java stub) are skipped.
+    """
+    candidates = []
+
     java_home = os.environ.get("JAVA_HOME", "").strip()
     if java_home:
-        cand = Path(java_home) / "bin" / "java"
-        if cand.exists():
-            return str(cand)
+        candidates.append(str(Path(java_home) / "bin" / "java"))
 
     found = shutil.which("java")
     if found:
-        return found
+        candidates.append(found)
 
     # Common Homebrew keg-only locations (java not on PATH by default)
-    for p in (
+    candidates += [
         "/opt/homebrew/opt/openjdk/bin/java",
         "/usr/local/opt/openjdk/bin/java",
-    ):
-        if Path(p).exists():
-            return p
+    ]
+
+    for cand in candidates:
+        if Path(cand).exists() and _java_works(cand):
+            return cand
     return None
 
 
