@@ -185,21 +185,49 @@ class SearchPapersTool(Tool):
             search_query = f"all:{query}"
         encoded_query = quote(search_query)
 
-        # 默认使用 HTTPS，若 SSL 失败则回退到 HTTP
-        url = f"https://export.arxiv.org/api/query?search_query={encoded_query}&sortBy=submittedDate&sortOrder=descending&start=0&max_results={max_results * 2}"
-        url_http = f"http://export.arxiv.org/api/query?search_query={encoded_query}&sortBy=submittedDate&sortOrder=descending&start=0&max_results={max_results * 2}"
+        # 请求量控制：arXiv API 对大请求量敏感，避免 max_results*2
+        fetch_limit = max_results + 5
+        url = f"https://export.arxiv.org/api/query?search_query={encoded_query}&sortBy=submittedDate&sortOrder=descending&start=0&max_results={fetch_limit}"
+        url_http = f"http://export.arxiv.org/api/query?search_query={encoded_query}&sortBy=submittedDate&sortOrder=descending&start=0&max_results={fetch_limit}"
 
         # 计算日期范围
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
 
-        # 发起请求
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.SSLError:
-            response = requests.get(url_http, timeout=30)
-            response.raise_for_status()
+        # 发起请求（带 User-Agent 和指数退避重试）
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "XHS-Paper-Engine/1.0 (research paper discovery)"
+        })
+
+        response = None
+        last_error = None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = session.get(url, timeout=30)
+                response.raise_for_status()
+                break
+            except requests.exceptions.SSLError:
+                response = session.get(url_http, timeout=30)
+                response.raise_for_status()
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt + 1  # 2s, 5s
+                    time.sleep(wait)
+                    continue
+            except requests.exceptions.HTTPError as e:
+                last_error = e
+                if response is not None and response.status_code == 429 and attempt < max_retries - 1:
+                    wait = 2 ** attempt + 2  # 3s, 6s
+                    time.sleep(wait)
+                    continue
+                return ToolResult(success=False, error=str(e))
+
+        if response is None:
+            return ToolResult(success=False, error=str(last_error) if last_error else "Request failed")
 
         # 解析 XML
         root = ET.fromstring(response.content)
@@ -631,45 +659,60 @@ class DownloadPaperTool(Tool):
         try:
             import requests
 
-            # 确定下载 URL
+            # 确定下载 URL（多镜像源，主站优先）
+            urls = []
             if arxiv_id:
-                url = f"https://export.arxiv.org/pdf/{arxiv_id}.pdf"
+                urls = [
+                    f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                    f"https://export.arxiv.org/pdf/{arxiv_id}.pdf",
+                ]
             elif pdf_url:
-                url = pdf_url
+                urls = [pdf_url]
             else:
                 return ToolResult(success=False, error="必须提供 arxiv_id 或 pdf_url")
 
             # 创建输出目录
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
-
-            # 下载文件
             pdf_path = output_path / "paper.pdf"
 
-            print(f"正在下载: {url}")
             session = requests.Session()
             session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
             })
 
-            response = session.get(url, timeout=180, stream=True)
-            response.raise_for_status()
+            last_error = None
+            for url in urls:
+                for attempt in range(2):
+                    try:
+                        print(f"正在下载: {url} (attempt {attempt + 1})")
+                        response = session.get(url, timeout=30, stream=True)
+                        response.raise_for_status()
 
-            downloaded = 0
+                        downloaded = 0
+                        with open(pdf_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=32768):
+                                f.write(chunk)
+                                downloaded += len(chunk)
 
-            with open(pdf_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=32768):
-                    f.write(chunk)
-                    downloaded += len(chunk)
+                        return ToolResult(
+                            success=True,
+                            data={
+                                "pdf_path": str(pdf_path),
+                                "size_mb": round(downloaded / 1024 / 1024, 2),
+                                "source": arxiv_id or pdf_url
+                            }
+                        )
+                    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                        last_error = e
+                        if attempt == 0:
+                            time.sleep(3)
+                        continue
+                    except requests.exceptions.HTTPError as e:
+                        last_error = e
+                        break
 
-            return ToolResult(
-                success=True,
-                data={
-                    "pdf_path": str(pdf_path),
-                    "size_mb": round(downloaded / 1024 / 1024, 2),
-                    "source": arxiv_id or pdf_url
-                }
-            )
+            return ToolResult(success=False, error=f"PDF 下载失败: {last_error}")
 
         except Exception as e:
             return ToolResult(success=False, error=str(e))
