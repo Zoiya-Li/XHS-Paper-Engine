@@ -159,9 +159,12 @@ Dependency: pip install playwright && playwright install chromium"""
             max_content_len = config.get("publish.xiaohongshu.max_content_len", 1000)
 
             if isinstance(content, str) and max_content_len:
-                trimmed = _trim_xiaohongshu_content(content, int(max_content_len))
+                # Leave a 30-char safety margin because Xiaohongshu's JS counter
+                # may include invisible chars or count CJK widths differently.
+                safe_limit = max(0, int(max_content_len) - 30)
+                trimmed = _trim_xiaohongshu_content(content, safe_limit)
                 if trimmed != content:
-                    print(f"⚠️ Content trimmed to {max_content_len} characters for Xiaohongshu")
+                    print(f"⚠️ Content trimmed to {safe_limit} characters for Xiaohongshu")
                 content = trimmed
 
             publisher = XiaohongshuPublisher(headless=False)

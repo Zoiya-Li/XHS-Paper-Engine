@@ -15,7 +15,7 @@ playwright install chromium
 Reference implementation: xiaohongshu-mcp (https://github.com/9cxndy/xiaohongshu-mcp)
 """
 
-import json
+import shutil
 import asyncio
 import requests
 from pathlib import Path
@@ -23,17 +23,37 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 
+# Canonical storage dir. We always read AND write here so a saved login is found
+# again next run. (The legacy ~/.dailypaper dir is only consulted for one-time
+# migration below.)
+STORAGE_DIR = Path.home() / ".xhs-paper-engine"
+LEGACY_STORAGE_DIR = Path.home() / ".dailypaper"
+
+
 def _resolve_storage_path(relative_path: str) -> Path:
-    """Prefer new storage dir, but fall back to legacy .dailypaper if it exists."""
-    new_base = Path.home() / ".xhs-paper-engine"
-    old_base = Path.home() / ".dailypaper"
-    new_path = new_base / relative_path
-    old_path = old_base / relative_path
-    if new_path.exists():
-        return new_path
-    if old_path.exists():
-        return old_path
-    return new_path
+    """Resolve a path under the canonical storage dir (deterministic).
+
+    Earlier this returned whichever of the new/legacy dirs happened to *exist*,
+    which split saves across two directories — the login tool could save to one
+    dir while the publish tool read the other, forcing a re-scan every run. Now
+    the path is always canonical; the legacy copy is migrated once in
+    ``_cookies_path`` so a prior login keeps working.
+    """
+    return STORAGE_DIR / relative_path
+
+
+def _cookies_path() -> Path:
+    """Canonical session-state file, migrating a legacy copy once if present."""
+    canonical = STORAGE_DIR / "xiaohongshu_cookies.json"
+    legacy = LEGACY_STORAGE_DIR / "xiaohongshu_cookies.json"
+    if not canonical.exists() and legacy.exists():
+        try:
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, canonical)
+            print(f"↪️  Migrated saved login from {legacy} to {canonical}")
+        except Exception:
+            pass
+    return canonical
 
 
 # ===========================================================================
@@ -49,7 +69,7 @@ def _resolve_storage_path(relative_path: str) -> Path:
 # bump SELECTORS_LAST_VERIFIED. Order matters: most specific / most reliable
 # selector first.
 # ===========================================================================
-SELECTORS_LAST_VERIFIED = "2024-06 (unverified since; update when you confirm)"
+SELECTORS_LAST_VERIFIED = "2026-05-28 (login/upload/title/content/tags confirmed working; publish button is inside a closed Shadow DOM of <xhs-publish-btn>, intercepted via attachShadow override to open mode, then clicked via xhs-publish-btn >> button.bg-red)"
 
 # Switch the publish page from "video" to "image+text" mode
 IMAGE_TAB_SELECTORS = [
@@ -115,17 +135,44 @@ CONFIRM_BUTTON_SELECTORS = [
     'button:has-text("离开")',
     '[class*="confirm"]',
 ]
+# Inject before any page loads to force closed shadow roots open so we can
+# reach the real <button class="bg-red"> inside <xhs-publish-btn>.
+INTERCEPT_SHADOW_SCRIPT = """
+(() => {
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function(init) {
+        return original.call(this, {...init, mode: 'open'});
+    };
+})();
+"""
+
 PUBLISH_BUTTON_SELECTORS = [
+    # 2026-05-28: <xhs-publish-btn> uses a closed Shadow DOM. We force it open
+    # via INTERCEPT_SHADOW_SCRIPT so Playwright can pierce inside. The real
+    # publish button is <button class="ce-btn bg-red"> inside the shadow root.
+    'xhs-publish-btn >> button.bg-red',
+    'xhs-publish-btn >> button:has-text("发布")',
+    # Fallbacks (without shadow piercing — may match sidebar nav or other elements)
+    'xhs-publish-btn >> text=发布',
+    'xhs-publish-btn[submit-text="发布"]',
+    'xhs-publish-btn',
+    'text="发布"',
     'div.submit div.d-button-content',
+    'div.submit button',
+    '.footer button:has-text("发布")',
+    '[class*="publish"] button',
+    '[class*="submit"]',
     'button:has-text("发布")',
-    'button[class*="publish"]',
-    'button:has-text("发布笔记")',
-    '[class*="submit"] button',
+    'div:has-text("发布"):not(:has-text("笔记"))',
 ]
 SUCCESS_INDICATOR_SELECTORS = [
     '[class*="success"]',
     '[class*="toast"]:has-text("成功")',
     '[class*="toast"]:has-text("发布")',
+    # 2026-05-28: Xiaohongshu shows a modal dialog with "发布成功" after publish
+    'text="发布成功"',
+    '[class*="el-message-box"]:has-text("发布成功")',
+    '[class*="dialog"]:has-text("发布成功")',
 ]
 # Presence of any of these on the creator home implies a logged-in session
 LOGIN_INDICATOR_SELECTORS = '.user-info, .user-avatar, [class*="avatar"]'
@@ -151,7 +198,7 @@ class XiaohongshuPublisher:
             cookies_path: Cookie file save path
             headless: Whether to run in headless mode (recommend False for first login)
         """
-        self.cookies_path = Path(cookies_path) if cookies_path else _resolve_storage_path("xiaohongshu_cookies.json")
+        self.cookies_path = Path(cookies_path) if cookies_path else _cookies_path()
         self.cookies_path.parent.mkdir(parents=True, exist_ok=True)
         self.headless = headless
         self.browser = None
@@ -179,15 +226,23 @@ class XiaohongshuPublisher:
             args=['--disable-blink-features=AutomationControlled']
         )
 
-        # Create context, set user agent
-        self.context = await self.browser.new_context(
-            viewport={'width': 1280, 'height': 800},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
-
-        # Try to load saved cookies
+        # Create context, restoring full session state (cookies + localStorage)
+        # if we have it. Xiaohongshu keeps part of the auth in localStorage, so
+        # cookies alone are not enough — we persist Playwright's storage_state.
+        ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ctx_kwargs = {'viewport': {'width': 1280, 'height': 800}, 'user_agent': ua}
         if self.cookies_path.exists():
-            await self._load_cookies()
+            try:
+                self.context = await self.browser.new_context(storage_state=str(self.cookies_path), **ctx_kwargs)
+                print(f"✅ Session state loaded: {self.cookies_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to load session state ({e}); starting fresh")
+                self.context = await self.browser.new_context(**ctx_kwargs)
+        else:
+            self.context = await self.browser.new_context(**ctx_kwargs)
+
+        # Force closed Shadow DOMs to open so we can pierce <xhs-publish-btn>
+        await self.context.add_init_script(INTERCEPT_SHADOW_SCRIPT)
 
         self.page = await self.context.new_page()
 
@@ -222,21 +277,10 @@ class XiaohongshuPublisher:
         return None
 
     async def _save_cookies(self):
-        """Save cookies to file"""
-        cookies = await self.context.cookies()
-        with open(self.cookies_path, 'w', encoding='utf-8') as f:
-            json.dump(cookies, f, ensure_ascii=False, indent=2)
-        print(f"✅ Cookies saved to: {self.cookies_path}")
-
-    async def _load_cookies(self):
-        """Load cookies from file"""
-        try:
-            with open(self.cookies_path, 'r', encoding='utf-8') as f:
-                cookies = json.load(f)
-            await self.context.add_cookies(cookies)
-            print(f"✅ Cookies loaded: {self.cookies_path}")
-        except Exception as e:
-            print(f"⚠️ Failed to load cookies: {e}")
+        """Persist the full session state (cookies + localStorage)."""
+        self.cookies_path.parent.mkdir(parents=True, exist_ok=True)
+        await self.context.storage_state(path=str(self.cookies_path))
+        print(f"✅ Session saved to: {self.cookies_path}")
 
     async def check_login(self) -> bool:
         """
@@ -253,26 +297,30 @@ class XiaohongshuPublisher:
                 await self.page.goto(self.CREATOR_HOME_URL, wait_until='domcontentloaded', timeout=60000)
             except Exception:
                 # A client-side redirect can abort the navigation (net::ERR_ABORTED).
-                # The page still lands somewhere — inspect the resulting URL below
-                # instead of treating the abort as "not logged in".
-                pass
-            await asyncio.sleep(3)
-
-            # Check if redirected to login page
-            current_url = self.page.url
-            if 'login' in current_url:
-                return False
-
-            # Check if there is user avatar or other login indicators
-            try:
-                # Try to find user info element
-                user_info = await self.page.query_selector(LOGIN_INDICATOR_SELECTORS)
-                if user_info:
-                    return True
-            except:
+                # The page still lands somewhere — inspect the resulting URL below.
                 pass
 
-            return 'login' not in current_url
+            # CRITICAL: a guest is redirected to /login by a client-side (SPA)
+            # check that takes ~5s. The old code waited only 3s, saw the pre-
+            # redirect /new/home URL, and reported a FALSE "logged in" — which
+            # made the login flow skip the QR/save and left every run unauthed.
+            # So POLL until the redirect settles instead of snapshotting once.
+            deadline = asyncio.get_event_loop().time() + 15
+            while asyncio.get_event_loop().time() < deadline:
+                url = self.page.url
+                if 'login' in url:
+                    return False
+                try:
+                    indicator = await self.page.query_selector(LOGIN_INDICATOR_SELECTORS)
+                    if indicator and await indicator.is_visible():
+                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+
+            # Survived the whole window on the dashboard without being bounced to
+            # /login → logged in. (A guest reliably hits /login within ~5s.)
+            return 'login' not in self.page.url
         except Exception as e:
             print(f"⚠️ Error checking login status: {e}")
             return False
@@ -324,6 +372,18 @@ class XiaohongshuPublisher:
                     await asyncio.sleep(2)  # let the redirect settle and cookies set
                     print("\n✅ Login detected, saving session...")
                     await self._save_cookies()
+                    # Show a visible confirmation in the browser so the user knows the
+                    # window closing is intentional, not a crash.
+                    try:
+                        await self.page.evaluate("""
+                            const div = document.createElement('div');
+                            div.innerHTML = '<div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;"><div style="background:#fff;padding:40px 60px;border-radius:16px;text-align:center;font-family:sans-serif;max-width:500px;"><h1 style="color:#ff2442;margin:0 0 16px;font-size:28px;">✅ 登录成功</h1><p style="font-size:18px;color:#333;line-height:1.6;margin:0;">Session 已保存，后续发布无需重新扫码。<br><br>此窗口将在 5 秒后自动关闭。</p></div></div>';
+                            document.body.appendChild(div.firstElementChild);
+                        """)
+                    except Exception:
+                        pass
+                    print("   🪟 Browser will close in 5s (this is normal — session is saved).")
+                    await asyncio.sleep(5)
                     return True
             except Exception as e:
                 print(f"   (waiting… {type(e).__name__})")
@@ -391,6 +451,41 @@ class XiaohongshuPublisher:
                     print(f"   ⚠️ Image not found: {img_path}")
 
         return valid_images
+
+    async def _wait_for_any_selector(self, selectors, timeout: int = 30):
+        """Poll until any of ``selectors`` is present, or timeout.
+
+        The publish page renders skeleton placeholders first and fills in the
+        real upload UI a moment later, so a fixed sleep is unreliable on a slow
+        load. Returns (selector, element) on success, or (None, None).
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            for sel in selectors:
+                try:
+                    el = await self.page.query_selector(sel)
+                except Exception:
+                    el = None
+                if el:
+                    return sel, el
+            await asyncio.sleep(0.5)
+        return None, None
+
+    async def _dismiss_popups(self):
+        """Close any open suggestion/topic dropdown overlaying the controls.
+
+        Typing a #tag opens a topic-suggestion popup (a tippy dropdown). It sits
+        on top of the visibility control and the publish button and intercepts
+        their clicks — which made publishing scroll/retry forever and then fail.
+        Pressing Escape closes it; best-effort.
+        """
+        try:
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+        except Exception:
+            pass
 
     async def _wait_for_upload_complete(self, expected_count: int, timeout: int = 120) -> int:
         """
@@ -524,7 +619,21 @@ class XiaohongshuPublisher:
             # Enter publish page
             print("   Loading publish page...")
             await self.page.goto(self.PUBLISH_URL, wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(5)  # Wait for page to fully load
+
+            # The page shows skeleton placeholders first, then renders the real
+            # upload UI. Wait for that UI (the image tab or the file input) to
+            # actually appear instead of guessing with a fixed sleep.
+            print("   Waiting for the upload UI to render...")
+            ready_sel, _ = await self._wait_for_any_selector(
+                IMAGE_TAB_SELECTORS + UPLOAD_INPUT_SELECTORS, timeout=40
+            )
+            if ready_sel is None:
+                shot = await self._save_debug_screenshot("xhs_publish_page_not_ready")
+                result["message"] = (
+                    "Publish page did not finish loading (upload UI never appeared). "
+                    f"This is usually a slow network. Debug screenshot: {shot or 'n/a'}"
+                )
+                return result
 
             # Important: click "Upload Image-Text" tab (page defaults to "Upload Video")
             # Reference xiaohongshu-mcp: mustClickPublishTab(page, "上传图文")
@@ -548,15 +657,14 @@ class XiaohongshuPublisher:
             # Upload images
             # Reference xiaohongshu-mcp: uploadInput := pp.MustElement(".upload-input")
             print(f"📸 Uploading images ({len(valid_images)})...")
-            await asyncio.sleep(2)
 
-            # Find the file input (critical — without it we cannot publish)
-            upload_input = None
-            for selector in UPLOAD_INPUT_SELECTORS:
-                upload_input = await self.page.query_selector(selector)
-                if upload_input:
-                    print(f"   Found upload input: {selector}")
-                    break
+            # Find the file input (critical — without it we cannot publish).
+            # Wait for it, since switching modes may re-render the panel.
+            selector, upload_input = await self._wait_for_any_selector(
+                UPLOAD_INPUT_SELECTORS, timeout=20
+            )
+            if upload_input:
+                print(f"   Found upload input: {selector}")
 
             if not upload_input:
                 # Hard failure: the page structure likely changed.
@@ -635,6 +743,9 @@ class XiaohongshuPublisher:
             if tags and content_elem:
                 print(f"🏷️ Adding tags: {tags}")
                 await self._input_tags(content_elem, tags)
+                # The last #tag leaves a topic-suggestion popup open, covering the
+                # visibility control and publish button. Close it before going on.
+                await self._dismiss_popups()
 
             # Wait for content filling to complete
             await asyncio.sleep(2)
@@ -646,14 +757,14 @@ class XiaohongshuPublisher:
                     # First open the "Visibility Range" dropdown
                     dropdown = await self._query_first_visible(VISIBILITY_DROPDOWN_SELECTORS)
                     if dropdown:
-                        await dropdown.click()
+                        await dropdown.click(timeout=5000)
                         print("   ✅ Clicked visibility dropdown")
                         await asyncio.sleep(1)
 
                         # Then pick "Only self visible"
                         private_opt = await self._query_first_visible(PRIVATE_OPTION_SELECTORS)
                         if private_opt:
-                            await private_opt.click()
+                            await private_opt.click(timeout=5000)
                             print("   ✅ Set to only self visible")
                             await asyncio.sleep(1)
                         else:
@@ -741,52 +852,139 @@ class XiaohongshuPublisher:
                     print(f"   ⚠️ Draft button not found, buttons on page: {button_texts}")
             else:
                 # Publish
-                # Reference xiaohongshu-mcp: submitButton -> "div.submit div.d-button-content"
                 print("🚀 Publishing note...")
+                # Close any topic-suggestion popup that would intercept the click
+                await self._dismiss_popups()
+
+                # Debug screenshot before clicking publish
+                await self._save_debug_screenshot("xhs_before_publish_click")
+
                 publish_clicked = False
+                clicked_selector = None
+
+                # Scroll to bottom so the sticky publish bar is in viewport
+                try:
+                    await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
+                # Try selectors in order (most specific first).
+                # With INTERCEPT_SHADOW_SCRIPT the closed Shadow DOM of
+                # <xhs-publish-btn> is forced open, so Playwright can pierce
+                # inside and hit the real <button class="ce-btn bg-red">.
                 for selector in PUBLISH_BUTTON_SELECTORS:
-                    try:
-                        await self.page.click(selector, timeout=3000)
-                        publish_clicked = True
-                        print(f"   Clicked publish button: {selector}")
-                        break
-                    except:
+                    elem = await self.page.query_selector(selector)
+                    if not elem:
                         continue
 
+                    # Skip the sidebar "发布笔记" nav button — it switches the
+                    # publish *type* (image→video) rather than submitting.
+                    try:
+                        box = await elem.bounding_box()
+                        if box and box['y'] < 150:
+                            continue   # too high on the page → sidebar nav
+                    except Exception:
+                        pass
+
+                    try:
+                        tag = await elem.evaluate("el => el.tagName")
+                        txt = await elem.inner_text()
+                        classes = await elem.evaluate("el => el.className")
+                        print(f"   Found element: <{tag}> class='{classes}' text='{txt.strip()}'")
+                    except Exception:
+                        pass
+
+                    # Standard click first
+                    try:
+                        await self.page.click(selector, timeout=5000)
+                        publish_clicked = True
+                        clicked_selector = selector
+                        print(f"   Clicked publish button: {selector}")
+                        break
+                    except Exception as e:
+                        print(f"   ⚠️ {selector} click failed: {e}")
+
+                    # Fallback: force click
+                    try:
+                        await self.page.click(selector, timeout=3000, force=True)
+                        publish_clicked = True
+                        clicked_selector = f"{selector} (force)"
+                        print(f"   Clicked publish button (force): {selector}")
+                        break
+                    except Exception:
+                        pass
+
+                # Last resort: coordinate click inside xhs-publish-btn right half
+                if not publish_clicked:
+                    try:
+                        btn = await self.page.query_selector('xhs-publish-btn')
+                        if btn:
+                            box = await btn.bounding_box()
+                            if box:
+                                x = box['x'] + box['width'] * 0.75
+                                y = box['y'] + box['height'] / 2
+                                await self.page.mouse.click(x, y)
+                                publish_clicked = True
+                                clicked_selector = f"coordinate-click ({x:.0f}, {y:.0f})"
+                                print(f"   Clicked publish button at coordinates: {clicked_selector}")
+                    except Exception as e:
+                        print(f"   ⚠️ Coordinate click failed: {e}")
+
                 if publish_clicked:
-                    await asyncio.sleep(5)  # Wait for publish to complete
+                    # Screenshot immediately after click
+                    await self._save_debug_screenshot("xhs_after_publish_click")
 
-                    # Check if publish is successful
-                    current_url = self.page.url
+                    # Poll for up to 30s: publishing is async and may need time
+                    print("   ⏳ Waiting for publish to complete...")
+                    deadline = asyncio.get_event_loop().time() + 30
+                    while asyncio.get_event_loop().time() < deadline:
+                        await asyncio.sleep(2)
 
-                    # Check success indicators
-                    for indicator in SUCCESS_INDICATOR_SELECTORS:
-                        success_elem = await self.page.query_selector(indicator)
-                        if success_elem:
+                        current_url = self.page.url
+
+                        # Left the publish page → very likely succeeded
+                        if 'publish' not in current_url:
                             result["success"] = True
-                            result["message"] = "Publish successful"
+                            result["message"] = "Publish successful (left publish page)"
                             break
 
-                    if not result["success"]:
-                        # Outcome is ambiguous — capture a screenshot so the user can verify.
+                        # Explicit success indicator on the page
+                        for indicator in SUCCESS_INDICATOR_SELECTORS:
+                            success_elem = await self.page.query_selector(indicator)
+                            if success_elem:
+                                try:
+                                    success_text = await success_elem.inner_text()
+                                except Exception:
+                                    success_text = ""
+                                result["success"] = True
+                                result["message"] = f"Publish successful ({success_text.strip()})"
+                                break
+                        if result["success"]:
+                            break
+
+                        # Explicit error indicator
+                        error_elem = await self.page.query_selector('[class*="error"], [class*="toast"]')
+                        if error_elem:
+                            error_text = await error_elem.inner_text()
+                            shot = await self._save_debug_screenshot("xhs_publish_error")
+                            result["message"] = f"Publish failed: {error_text}. Screenshot: {shot or 'n/a'}"
+                            break
+
+                    if not result["success"] and not result["message"]:
                         shot = await self._save_debug_screenshot("xhs_publish_outcome")
-                        if 'publish' not in current_url or 'success' in current_url:
+                        current_url = self.page.url
+                        if 'publish' not in current_url:
                             result["success"] = True
                             result["message"] = (
                                 f"Publish likely succeeded (please confirm manually). "
                                 f"Screenshot: {shot or 'n/a'}"
                             )
                         else:
-                            # Check if there is error message
-                            error_elem = await self.page.query_selector('[class*="error"], [class*="toast"]')
-                            if error_elem:
-                                error_text = await error_elem.inner_text()
-                                result["message"] = f"Publish failed: {error_text}. Screenshot: {shot or 'n/a'}"
-                            else:
-                                result["message"] = (
-                                    f"Publish status unknown, please check manually. "
-                                    f"Screenshot: {shot or 'n/a'}"
-                                )
+                            result["message"] = (
+                                f"Publish status unknown, please check manually. "
+                                f"Clicked: {clicked_selector}. Screenshot: {shot or 'n/a'}"
+                            )
                 else:
                     shot = await self._save_debug_screenshot("xhs_publish_button_not_found")
                     result["message"] = (
